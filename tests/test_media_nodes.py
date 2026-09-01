@@ -74,7 +74,7 @@ def test_node_mappings_and_public_contracts():
     text = nodes.WanTextToVideo.INPUT_TYPES()
     assert text["required"]["model_version"][0] == ["3.0", "3.0-prime"]
     assert text["required"]["resolution"][0] == ["480P", "720P", "1080P"]
-    assert text["required"]["duration"][0] == list(range(2, 31))
+    assert text["required"]["duration"][0] == [-1, *range(2, 31)]
     assert text["optional"]["super_resolution"][0] == ["Disabled", "2K", "4K"]
     assert nodes.WanTextToVideo.RETURN_NAMES == ("video_url", "video_id", "task_id")
     preview_inputs = nodes.WanPreviewVideo.INPUT_TYPES()["required"]
@@ -155,6 +155,16 @@ def test_prompt_boundary():
     from wan3_api.models import validate_request
     with pytest.raises(ValueError, match="20000"):
         validate_request(request, prompt_required=True)
+
+
+def test_smart_duration_is_accepted_and_invalid_gap_is_rejected():
+    from wan3_api.models import validate_request
+
+    smart = nodes._request("3.0", "demo", "720P", "16:9", -1, "", "Disabled", -1, "id")
+    validate_request(smart, prompt_required=True)
+    invalid = nodes._request("3.0", "demo", "720P", "16:9", 1, "", "Disabled", -1, "id")
+    with pytest.raises(ValueError, match="smart duration"):
+        validate_request(invalid, prompt_required=True)
 
 
 def test_query_result_is_sanitized():

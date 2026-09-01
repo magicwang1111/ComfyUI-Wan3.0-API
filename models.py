@@ -7,7 +7,7 @@ from typing import Any
 MODEL_VERSIONS = ["3.0", "3.0-prime"]
 RESOLUTIONS = ["480P", "720P", "1080P"]
 SUPER_RESOLUTIONS = ["Disabled", "2K", "4K"]
-DURATIONS = list(range(2, 31))
+DURATIONS = [-1, *range(2, 31)]
 ASPECT_RATIOS = ["16:9", "9:16", "4:3", "3:4", "1:1", "adaptive"]
 PROMPT_MAX_CHARS = 20000
 
@@ -72,8 +72,8 @@ def validate_request(request: WanVideoRequest, *, prompt_required: bool) -> None
         raise ValueError("prompt is required for text-to-video.")
     if len(request.prompt) > PROMPT_MAX_CHARS:
         raise ValueError(f"prompt must be {PROMPT_MAX_CHARS} characters or fewer.")
-    if not 2 <= request.duration <= 30:
-        raise ValueError("duration must be between 2 and 30 seconds.")
+    if request.duration != -1 and not 2 <= request.duration <= 30:
+        raise ValueError("duration must be -1 (smart duration) or between 2 and 30 seconds.")
     if request.enhance_prompt not in {"Enabled", "Disabled"}:
         raise ValueError("enhance_prompt must be Enabled or Disabled.")
     if len(request.session_id) > 50:

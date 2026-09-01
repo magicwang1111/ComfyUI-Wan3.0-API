@@ -114,6 +114,19 @@ def test_tencent_payload_uses_native_resolution_when_super_resolution_is_disable
     assert payload["OutputConfig"]["Resolution"] == "1080P"
 
 
+def test_tencent_payload_preserves_smart_duration():
+    request = WanVideoRequest(
+        model_version="3.0",
+        prompt="demo",
+        resolution="720P",
+        aspect_ratio="16:9",
+        duration=-1,
+        session_id="wan3-session",
+    )
+    payload = build_payload(tencent_config(), request)
+    assert payload["OutputConfig"]["Duration"] == -1
+
+
 def test_tencent_api_error_is_actionable_and_secret_free():
     client = TencentVodClient(tencent_config())
     client.session.post = mock.Mock(return_value=response(payload={
