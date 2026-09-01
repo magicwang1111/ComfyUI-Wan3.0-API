@@ -1,0 +1,2 @@
+{"last_node_id":1,"last_link_id":0,"nodes":[{"id":1,"type":"Wan 3.0 API Query Task","pos":[120,120],"size":[420,260],"flags":{},"order":0,"mode":0,"inputs":[],"outputs":[{"name":"status","type":"STRING","links":null},{"name":"video_url","type":"STRING","links":null},{"name":"video_id","type":"STRING","links":null},{"name":"task_id","type":"STRING","links":null},{"name":"result_json","type":"STRING","links":null}],"properties":{},"widgets_values":["PASTE_TASK_ID_HERE",true]}],"links":[],"groups":[],"config":{},"extra":{},"version":0.4}
+

@@ -1,0 +1,388 @@
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+import time
+import urllib.parse
+import uuid
+
+import requests
+
+import folder_paths
+
+from .config import load_json_config, load_oss_config, load_tencent_config
+from .media import audio_to_blob, first_image_blob, image_batch_to_blobs, video_to_blob
+from .models import ASPECT_RATIOS, MODEL_VERSIONS, RESOLUTIONS, MediaBlob, TaskSubmission, WanVideoRequest
+from .oss_client import OssClient
+from .tencent_vod import (
+    FAILED_STATUSES,
+    TERMINAL_STATUSES,
+    TencentVodClient,
+    TencentVodTaskError,
+    sanitize_task,
+    task_error,
+    video_result,
+)
+
+
+NODE_CATEGORY = "Wan 3.0 API"
+NODE_PREFIX = "Wan 3.0 API"
+DEFAULT_VIDEO_FILENAME_PREFIX = "video/Wan3_%year%%month%%day%_%hour%%minute%%second%"
+
+
+def _session_id() -> str:
+    return f"wan3-{uuid.uuid4().hex[:24]}"
+
+
+def _object_key(prefix: str, session_id: str, extension: str) -> str:
+    date = dt.datetime.now().strftime("%Y%m%d")
+    return f"{prefix}/wan3/{date}/{session_id}/{uuid.uuid4().hex}.{extension}"
+
+
+def _file_info(uploaded_url: str, category: str, usage: str) -> dict:
+    return {
+        "Type": "Url",
+        "Category": category,
+        "Url": uploaded_url,
+        "Usage": usage,
+    }
+
+
+def _request(
+    model_version,
+    prompt,
+    resolution,
+    aspect_ratio,
+    duration,
+    negative_prompt,
+    enhance_prompt,
+    seed,
+    session_id,
+) -> WanVideoRequest:
+    return WanVideoRequest(
+        model_version=str(model_version),
+        prompt=str(prompt or ""),
+        resolution=str(resolution),
+        aspect_ratio=str(aspect_ratio),
+        duration=int(duration),
+        session_id=session_id,
+        negative_prompt=str(negative_prompt or ""),
+        enhance_prompt=str(enhance_prompt or "Disabled"),
+        seed=None if seed is None or int(seed) < 0 else int(seed),
+    )
+
+
+def _cleanup(oss: OssClient, object_keys: list[str]) -> None:
+    for object_key in object_keys:
+        try:
+            oss.delete(object_key)
+        except Exception as exc:
+            print(f"[{NODE_PREFIX}] OSS cleanup warning for {object_key}: {exc}")
+
+
+def _generate(request: WanVideoRequest, media: list[tuple[MediaBlob, str, str]], *, prompt_required: bool):
+    data = load_json_config()
+    tencent_config = load_tencent_config(data)
+    if not media:
+        with TencentVodClient(tencent_config) as client:
+            submission = client.create_video(request, prompt_required=prompt_required)
+            task = client.wait_for_task(submission.task_id)
+            return video_result(task, submission)
+
+    oss_config = load_oss_config(data)
+    if oss_config.signed_url_expires < tencent_config.max_wait_seconds + 600:
+        raise ValueError(
+            "oss_signed_url_expires must be at least tencent_max_wait_seconds + 600 seconds."
+        )
+    object_keys: list[str] = []
+    submission: TaskSubmission | None = None
+    terminal = False
+    with OssClient(oss_config) as oss:
+        try:
+            for index, (blob, category, usage) in enumerate(media, start=1):
+                object_key = _object_key(oss_config.prefix, request.session_id, blob.extension)
+                try:
+                    uploaded = oss.upload(object_key, blob, timeout=tencent_config.request_timeout)
+                except Exception as exc:
+                    raise RuntimeError(f"OSS {category} upload {index} failed: {exc}") from exc
+                object_keys.append(uploaded.object_key)
+                request.file_infos.append(_file_info(uploaded.url, category, usage))
+
+            with TencentVodClient(tencent_config) as client:
+                submission = client.create_video(request, prompt_required=prompt_required)
+                try:
+                    task = client.wait_for_task(submission.task_id)
+                    terminal = True
+                except TencentVodTaskError as exc:
+                    terminal = exc.terminal
+                    raise
+                return video_result(task, submission)
+        finally:
+            if oss_config.cleanup_after_task and (submission is None or terminal):
+                _cleanup(oss, object_keys)
+
+
+def _common_required(*, aspect_ratio: bool) -> dict:
+    required = {
+        "model_version": (MODEL_VERSIONS, {"default": "3.0"}),
+        "prompt": ("STRING", {"multiline": True, "default": ""}),
+        "resolution": (RESOLUTIONS, {"default": "720P"}),
+    }
+    if aspect_ratio:
+        required["aspect_ratio"] = (ASPECT_RATIOS, {"default": "16:9"})
+    required["duration"] = ("INT", {"default": 5, "min": 2, "max": 30, "step": 1})
+    return required
+
+
+def _common_optional() -> dict:
+    return {
+        "negative_prompt": ("STRING", {"multiline": True, "default": ""}),
+        "enhance_prompt": (["Disabled", "Enabled"], {"default": "Disabled"}),
+        "seed": ("INT", {"default": -1, "min": -1, "max": 2147483647, "step": 1}),
+    }
+
+
+class WanTextToVideo:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": _common_required(aspect_ratio=True), "optional": _common_optional()}
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("video_url", "video_id", "task_id")
+    FUNCTION = "generate"
+    CATEGORY = NODE_CATEGORY
+
+    def generate(
+        self,
+        model_version,
+        prompt,
+        resolution,
+        aspect_ratio,
+        duration,
+        negative_prompt="",
+        enhance_prompt="Disabled",
+        seed=-1,
+    ):
+        request = _request(
+            model_version, prompt, resolution, aspect_ratio, duration,
+            negative_prompt, enhance_prompt, seed, _session_id(),
+        )
+        result = _generate(request, [], prompt_required=True)
+        return (result.video_url, result.video_id, result.task_id)
+
+
+class WanFrameToVideo:
+    @classmethod
+    def INPUT_TYPES(cls):
+        optional = _common_optional()
+        optional.update({"first_frame": ("IMAGE",), "last_frame": ("IMAGE",)})
+        return {"required": _common_required(aspect_ratio=False), "optional": optional}
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("video_url", "video_id", "task_id")
+    FUNCTION = "generate"
+    CATEGORY = NODE_CATEGORY
+
+    def generate(
+        self,
+        model_version,
+        prompt,
+        resolution,
+        duration,
+        negative_prompt="",
+        enhance_prompt="Disabled",
+        seed=-1,
+        first_frame=None,
+        last_frame=None,
+    ):
+        if first_frame is None and last_frame is None:
+            raise ValueError("Connect first_frame, last_frame, or both.")
+        media = []
+        if first_frame is not None:
+            media.append((first_image_blob(first_frame), "Image", "FirstFrame"))
+        if last_frame is not None:
+            media.append((first_image_blob(last_frame), "Image", "LastFrame"))
+        request = _request(
+            model_version, prompt, resolution, "adaptive", duration,
+            negative_prompt, enhance_prompt, seed, _session_id(),
+        )
+        result = _generate(request, media, prompt_required=False)
+        return (result.video_url, result.video_id, result.task_id)
+
+
+class WanReferenceToVideo:
+    @classmethod
+    def INPUT_TYPES(cls):
+        optional = _common_optional()
+        optional["reference_images"] = ("IMAGE",)
+        optional.update({f"reference_video_{index}": ("VIDEO",) for index in range(1, 6)})
+        optional.update({f"reference_audio_{index}": ("AUDIO",) for index in range(1, 6)})
+        return {"required": _common_required(aspect_ratio=True), "optional": optional}
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("video_url", "video_id", "task_id")
+    FUNCTION = "generate"
+    CATEGORY = NODE_CATEGORY
+
+    def generate(
+        self,
+        model_version,
+        prompt,
+        resolution,
+        aspect_ratio,
+        duration,
+        negative_prompt="",
+        enhance_prompt="Disabled",
+        seed=-1,
+        reference_images=None,
+        **kwargs,
+    ):
+        image_blobs = image_batch_to_blobs(reference_images, maximum=10)
+        video_inputs = [kwargs.get(f"reference_video_{index}") for index in range(1, 6)]
+        audio_inputs = [kwargs.get(f"reference_audio_{index}") for index in range(1, 6)]
+        video_blobs = [video_to_blob(item) for item in video_inputs if item is not None]
+        audio_blobs = [audio_to_blob(item) for item in audio_inputs if item is not None]
+        if not image_blobs and not video_blobs:
+            raise ValueError("Reference mode requires at least one image or video; audio cannot be used alone.")
+        video_duration = sum(blob.duration or 0 for blob in video_blobs)
+        audio_duration = sum(blob.duration or 0 for blob in audio_blobs)
+        if video_duration > 15:
+            raise ValueError("Reference video total duration must not exceed 15 seconds.")
+        if audio_duration > 15:
+            raise ValueError("Reference audio total duration must not exceed 15 seconds.")
+        if video_blobs and video_duration + int(duration) > 30:
+            raise ValueError("Reference video total duration plus output duration must not exceed 30 seconds.")
+        media = (
+            [(blob, "Image", "Reference") for blob in image_blobs]
+            + [(blob, "Video", "Reference") for blob in video_blobs]
+            + [(blob, "Audio", "Reference") for blob in audio_blobs]
+        )
+        request = _request(
+            model_version, prompt, resolution, aspect_ratio, duration,
+            negative_prompt, enhance_prompt, seed, _session_id(),
+        )
+        result = _generate(request, media, prompt_required=False)
+        return (result.video_url, result.video_id, result.task_id)
+
+
+class WanQueryTask:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "task_id": ("STRING", {"default": ""}),
+                "wait_for_completion": ("BOOLEAN", {"default": True}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("status", "video_url", "video_id", "task_id", "result_json")
+    FUNCTION = "query"
+    CATEGORY = NODE_CATEGORY
+
+    def query(self, task_id, wait_for_completion=True):
+        task_id = str(task_id or "").strip()
+        if not task_id:
+            raise ValueError("task_id is required.")
+        config = load_tencent_config()
+        with TencentVodClient(config) as client:
+            if wait_for_completion:
+                task = client.wait_for_task(task_id)
+            else:
+                detail = client.describe_task(task_id)
+                task = client.extract_task(detail)
+                if task is None:
+                    raise RuntimeError(f"Tencent VOD task {task_id} returned no task details.")
+                error = task_error(task)
+                task_status = client.status(task)
+                if task_status in FAILED_STATUSES or (task_status in TERMINAL_STATUSES and error):
+                    raise TencentVodTaskError(
+                        f"Tencent VOD task {task_id} failed with status={task_status}: {error or '-'}",
+                        task_id,
+                        True,
+                    )
+            status = client.status(task)
+        output = task.get("Output") or {}
+        file_infos = output.get("FileInfos") or []
+        first = next(
+            (item for item in file_infos if isinstance(item, dict) and (item.get("FileUrl") or item.get("Url"))),
+            {},
+        )
+        video_url = str(first.get("FileUrl") or first.get("Url") or "")
+        video_id = str(first.get("FileId") or first.get("VideoId") or "")
+        result_json = json.dumps(sanitize_task(task), ensure_ascii=False, separators=(",", ":"))
+        return (status, video_url, video_id, task_id, result_json)
+
+
+def _saved_result(filename, subfolder, folder_type):
+    return {"filename": filename, "subfolder": subfolder, "type": folder_type}
+
+
+def _local_media_url(filename, subfolder, folder_type):
+    return "/view?" + urllib.parse.urlencode({
+        "filename": filename,
+        "subfolder": subfolder,
+        "type": folder_type,
+    })
+
+
+class WanPreviewVideo:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"video_url": ("STRING", {"forceInput": True})}}
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("file_path",)
+    OUTPUT_NODE = True
+    FUNCTION = "download"
+    CATEGORY = NODE_CATEGORY
+
+    def download(self, video_url):
+        video_url = str(video_url or "").strip()
+        if not video_url:
+            raise ValueError("video_url is empty; query the task_id to recover the result.")
+        output_dir = folder_paths.get_output_directory()
+        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+            DEFAULT_VIDEO_FILENAME_PREFIX,
+            output_dir,
+        )
+        os.makedirs(full_output_folder, exist_ok=True)
+        file = f"{filename}_{counter:05}_.mp4"
+        file_path = os.path.join(full_output_folder, file)
+        try:
+            with requests.get(video_url, stream=True, timeout=(15, 600)) as response:
+                response.raise_for_status()
+                with open(file_path, "wb") as handle:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            handle.write(chunk)
+            if not os.path.getsize(file_path):
+                raise RuntimeError("Downloaded video is empty.")
+        except Exception as exc:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise RuntimeError(
+                "Video download failed; the Temporary URL may have expired. "
+                "Query the task_id and retry."
+            ) from exc
+        preview_url = _local_media_url(file, subfolder, "output")
+        return {
+            "ui": {
+                "images": [_saved_result(file, subfolder, "output")],
+                "video_url": [preview_url],
+                "animated": (True,),
+            },
+            "result": (file_path,),
+        }
+
+
+NODE_CLASS_MAPPINGS = {
+    f"{NODE_PREFIX} Text To Video": WanTextToVideo,
+    f"{NODE_PREFIX} Frame To Video": WanFrameToVideo,
+    f"{NODE_PREFIX} Reference To Video": WanReferenceToVideo,
+    f"{NODE_PREFIX} Query Task": WanQueryTask,
+    f"{NODE_PREFIX} Preview Video": WanPreviewVideo,
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {key: key for key in NODE_CLASS_MAPPINGS}

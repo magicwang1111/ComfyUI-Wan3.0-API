@@ -1,0 +1,20 @@
+{
+  "oss_endpoint": "oss-cn-hangzhou.aliyuncs.com",
+  "oss_access_key_id": "",
+  "oss_access_key_secret": "",
+  "oss_bucket": "example-bucket",
+  "oss_prefix": "ComfyUI-tmp",
+  "oss_signed_url_expires": 86400,
+  "oss_cleanup_after_task": true,
+  "tencent_secret_id": "",
+  "tencent_secret_key": "",
+  "tencent_region": "ap-guangzhou",
+  "tencent_sub_app_id": 0,
+  "tencent_poll_interval": 5.0,
+  "tencent_request_timeout": 120,
+  "tencent_max_wait_seconds": 3600,
+  "tencent_storage_mode": "Temporary",
+  "tencent_input_compliance_check": "Enabled",
+  "tencent_output_compliance_check": "Enabled"
+}
+
