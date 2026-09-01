@@ -188,6 +188,11 @@ class TencentVodClient:
 
 
 def build_payload(config: TencentConfig, request: WanVideoRequest) -> dict:
+    output_resolution = (
+        request.resolution
+        if request.super_resolution == "Disabled"
+        else request.super_resolution
+    )
     payload = {
         "SubAppId": config.sub_app_id,
         "ModelName": "Wan",
@@ -195,7 +200,7 @@ def build_payload(config: TencentConfig, request: WanVideoRequest) -> dict:
         "Prompt": request.prompt,
         "OutputConfig": {
             "StorageMode": config.storage_mode,
-            "Resolution": request.resolution,
+            "Resolution": output_resolution,
             "AspectRatio": request.aspect_ratio,
             "Duration": request.duration,
             "InputComplianceCheck": config.input_compliance_check,
@@ -261,4 +266,3 @@ def sanitize_task(value):
         parsed = urllib.parse.urlsplit(value)
         return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
     return value
-

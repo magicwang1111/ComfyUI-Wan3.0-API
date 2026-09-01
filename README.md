@@ -42,7 +42,7 @@ The same values can be supplied through the environment variables documented in 
 
 ## Nodes
 
-- **Wan 3.0 API Text To Video** supports `3.0` and `3.0-prime`, 480P through 4K, ratios from the supplied Wan guide, and 2-30 second output. It does not use OSS.
+- **Wan 3.0 API Text To Video** supports `3.0` and `3.0-prime`, native 480P/720P/1080P output, optional 2K/4K super-resolution, ratios from the supplied Wan guide, and a 2-30 second duration list. It does not use OSS.
 - **Wan 3.0 API Frame To Video** accepts a first frame, last frame, or both. Frames are uploaded to OSS and submitted as `FirstFrame` / `LastFrame`; aspect ratio is fixed to `adaptive`.
 - **Wan 3.0 API Reference To Video** accepts an IMAGE batch of up to 10 images, five VIDEO sockets, and five AUDIO sockets. Audio cannot be used alone. Reference video and audio are each limited to 15 seconds total.
 - **Wan 3.0 API Query Task** performs one status query or waits for completion, allowing recovery from an interrupted workflow.
@@ -57,6 +57,7 @@ All generation nodes return `video_url`, `video_id`, and `task_id`. Keep the Tas
 - Reference video: 2-15 seconds each, 50 MB each, at most 15 seconds total.
 - Reference audio: 2-15 seconds each, 15 MB each, at most 15 seconds total.
 - With reference video, input video duration plus requested output duration must not exceed 30 seconds.
+- `resolution` contains only native 480P/720P/1080P choices. Set `super_resolution` to `2K` or `4K` to request Tencent's super-resolution output; leave it `Disabled` to send the native resolution unchanged.
 
 ## Install and test
 
@@ -79,4 +80,3 @@ The smoke script performs one 480P, 2-second text-to-video request. Frame, tail-
 ## Documentation notes
 
 The supplied VOD guide's 2026-09-01 update identifies `ModelName=Wan` and versions `3.0` / `3.0-prime`. A later Wan section contains copied Hailuo/H3 values; this implementation follows the Wan update record and the generic `CreateAigcVideoTask` wire contract. Tail-frame-only generation is implemented from that update and should be verified against the enabled Tencent account before production use.
-

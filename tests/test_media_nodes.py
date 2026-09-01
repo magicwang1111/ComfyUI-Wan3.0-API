@@ -73,6 +73,9 @@ def test_node_mappings_and_public_contracts():
     assert len(nodes.NODE_CLASS_MAPPINGS) == 5
     text = nodes.WanTextToVideo.INPUT_TYPES()
     assert text["required"]["model_version"][0] == ["3.0", "3.0-prime"]
+    assert text["required"]["resolution"][0] == ["480P", "720P", "1080P"]
+    assert text["required"]["duration"][0] == list(range(2, 31))
+    assert text["optional"]["super_resolution"][0] == ["Disabled", "2K", "4K"]
     assert nodes.WanTextToVideo.RETURN_NAMES == ("video_url", "video_id", "task_id")
     preview_inputs = nodes.WanPreviewVideo.INPUT_TYPES()["required"]
     assert list(preview_inputs) == ["video_url"]
@@ -83,6 +86,21 @@ def test_text_node_does_not_upload_oss():
         result = nodes.WanTextToVideo().generate("3.0", "demo", "480P", "16:9", 2)
     assert result == ("https://video", "file", "task")
     assert generate.call_args.args[1] == []
+
+
+def test_node_maps_super_resolution_separately():
+    captured = {}
+
+    def fake_generate(request, media_items, **kwargs):
+        captured["request"] = request
+        return fake_result()
+
+    with mock.patch.object(nodes, "_generate", side_effect=fake_generate):
+        nodes.WanTextToVideo().generate(
+            "3.0", "demo", "1080P", "16:9", 5, super_resolution="2K"
+        )
+    assert captured["request"].resolution == "1080P"
+    assert captured["request"].super_resolution == "2K"
 
 
 def test_frame_node_maps_first_and_last():

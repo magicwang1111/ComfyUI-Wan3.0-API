@@ -13,7 +13,16 @@ import folder_paths
 
 from .config import load_json_config, load_oss_config, load_tencent_config
 from .media import audio_to_blob, first_image_blob, image_batch_to_blobs, video_to_blob
-from .models import ASPECT_RATIOS, MODEL_VERSIONS, RESOLUTIONS, MediaBlob, TaskSubmission, WanVideoRequest
+from .models import (
+    ASPECT_RATIOS,
+    DURATIONS,
+    MODEL_VERSIONS,
+    RESOLUTIONS,
+    SUPER_RESOLUTIONS,
+    MediaBlob,
+    TaskSubmission,
+    WanVideoRequest,
+)
 from .oss_client import OssClient
 from .tencent_vod import (
     FAILED_STATUSES,
@@ -59,6 +68,7 @@ def _request(
     enhance_prompt,
     seed,
     session_id,
+    super_resolution="Disabled",
 ) -> WanVideoRequest:
     return WanVideoRequest(
         model_version=str(model_version),
@@ -70,6 +80,7 @@ def _request(
         negative_prompt=str(negative_prompt or ""),
         enhance_prompt=str(enhance_prompt or "Disabled"),
         seed=None if seed is None or int(seed) < 0 else int(seed),
+        super_resolution=str(super_resolution or "Disabled"),
     )
 
 
@@ -131,7 +142,7 @@ def _common_required(*, aspect_ratio: bool) -> dict:
     }
     if aspect_ratio:
         required["aspect_ratio"] = (ASPECT_RATIOS, {"default": "16:9"})
-    required["duration"] = ("INT", {"default": 5, "min": 2, "max": 30, "step": 1})
+    required["duration"] = (DURATIONS, {"default": 5})
     return required
 
 
@@ -140,6 +151,7 @@ def _common_optional() -> dict:
         "negative_prompt": ("STRING", {"multiline": True, "default": ""}),
         "enhance_prompt": (["Disabled", "Enabled"], {"default": "Disabled"}),
         "seed": ("INT", {"default": -1, "min": -1, "max": 2147483647, "step": 1}),
+        "super_resolution": (SUPER_RESOLUTIONS, {"default": "Disabled"}),
     }
 
 
@@ -163,10 +175,11 @@ class WanTextToVideo:
         negative_prompt="",
         enhance_prompt="Disabled",
         seed=-1,
+        super_resolution="Disabled",
     ):
         request = _request(
             model_version, prompt, resolution, aspect_ratio, duration,
-            negative_prompt, enhance_prompt, seed, _session_id(),
+            negative_prompt, enhance_prompt, seed, _session_id(), super_resolution,
         )
         result = _generate(request, [], prompt_required=True)
         return (result.video_url, result.video_id, result.task_id)
@@ -193,6 +206,7 @@ class WanFrameToVideo:
         negative_prompt="",
         enhance_prompt="Disabled",
         seed=-1,
+        super_resolution="Disabled",
         first_frame=None,
         last_frame=None,
     ):
@@ -205,7 +219,7 @@ class WanFrameToVideo:
             media.append((first_image_blob(last_frame), "Image", "LastFrame"))
         request = _request(
             model_version, prompt, resolution, "adaptive", duration,
-            negative_prompt, enhance_prompt, seed, _session_id(),
+            negative_prompt, enhance_prompt, seed, _session_id(), super_resolution,
         )
         result = _generate(request, media, prompt_required=False)
         return (result.video_url, result.video_id, result.task_id)
@@ -235,6 +249,7 @@ class WanReferenceToVideo:
         negative_prompt="",
         enhance_prompt="Disabled",
         seed=-1,
+        super_resolution="Disabled",
         reference_images=None,
         **kwargs,
     ):
@@ -260,7 +275,7 @@ class WanReferenceToVideo:
         )
         request = _request(
             model_version, prompt, resolution, aspect_ratio, duration,
-            negative_prompt, enhance_prompt, seed, _session_id(),
+            negative_prompt, enhance_prompt, seed, _session_id(), super_resolution,
         )
         result = _generate(request, media, prompt_required=False)
         return (result.video_url, result.video_id, result.task_id)

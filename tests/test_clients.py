@@ -86,17 +86,32 @@ def test_tencent_payload_and_signature_headers():
         negative_prompt="blur",
         enhance_prompt="Enabled",
         seed=7,
+        super_resolution="4K",
         file_infos=[{"Type": "Url", "Category": "Image", "Usage": "FirstFrame", "Url": "https://x"}],
     )
     payload = build_payload(config, request)
     assert payload["ModelName"] == "Wan"
     assert payload["ModelVersion"] == "3.0-prime"
     assert payload["OutputConfig"]["StorageMode"] == "Temporary"
+    assert payload["OutputConfig"]["Resolution"] == "4K"
     assert payload["FileInfos"][0]["Type"] == "Url"
     headers = TencentVodClient(config).headers("CreateAigcVideoTask", payload, timestamp=1700000000)
     assert headers["Host"] == "vod.tencentcloudapi.com"
     assert headers["Authorization"].startswith("TC3-HMAC-SHA256 Credential=test-id/")
     assert "test-secret" not in json.dumps(headers)
+
+
+def test_tencent_payload_uses_native_resolution_when_super_resolution_is_disabled():
+    request = WanVideoRequest(
+        model_version="3.0",
+        prompt="demo",
+        resolution="1080P",
+        aspect_ratio="16:9",
+        duration=5,
+        session_id="wan3-session",
+    )
+    payload = build_payload(tencent_config(), request)
+    assert payload["OutputConfig"]["Resolution"] == "1080P"
 
 
 def test_tencent_api_error_is_actionable_and_secret_free():
@@ -147,4 +162,3 @@ def test_video_result_requires_url_and_sanitizes_queries():
     assert sanitize_task(task)["Output"]["FileInfos"][0]["FileUrl"] == "https://host/video.mp4"
     with pytest.raises(TencentVodTaskError, match="no file URL"):
         video_result({"Status": "FINISH", "Output": {}}, submission)
-

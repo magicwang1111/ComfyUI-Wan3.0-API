@@ -5,7 +5,9 @@ from typing import Any
 
 
 MODEL_VERSIONS = ["3.0", "3.0-prime"]
-RESOLUTIONS = ["480P", "720P", "1080P", "2K", "4K"]
+RESOLUTIONS = ["480P", "720P", "1080P"]
+SUPER_RESOLUTIONS = ["Disabled", "2K", "4K"]
+DURATIONS = list(range(2, 31))
 ASPECT_RATIOS = ["16:9", "9:16", "4:3", "3:4", "1:1", "adaptive"]
 PROMPT_MAX_CHARS = 20000
 
@@ -35,6 +37,7 @@ class WanVideoRequest:
     negative_prompt: str = ""
     enhance_prompt: str = "Disabled"
     seed: int | None = None
+    super_resolution: str = "Disabled"
     file_infos: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -59,6 +62,10 @@ def validate_request(request: WanVideoRequest, *, prompt_required: bool) -> None
         raise ValueError(f"model_version must be one of: {', '.join(MODEL_VERSIONS)}")
     if request.resolution not in RESOLUTIONS:
         raise ValueError(f"resolution must be one of: {', '.join(RESOLUTIONS)}")
+    if request.super_resolution not in SUPER_RESOLUTIONS:
+        raise ValueError(
+            f"super_resolution must be one of: {', '.join(SUPER_RESOLUTIONS)}"
+        )
     if request.aspect_ratio not in ASPECT_RATIOS:
         raise ValueError(f"aspect_ratio must be one of: {', '.join(ASPECT_RATIOS)}")
     if prompt_required and not request.prompt.strip():
@@ -71,4 +78,3 @@ def validate_request(request: WanVideoRequest, *, prompt_required: bool) -> None
         raise ValueError("enhance_prompt must be Enabled or Disabled.")
     if len(request.session_id) > 50:
         raise ValueError("session_id must be 50 characters or fewer.")
-
