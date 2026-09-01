@@ -203,6 +203,7 @@ def build_payload(config: TencentConfig, request: WanVideoRequest) -> dict:
             "Resolution": output_resolution,
             "AspectRatio": request.aspect_ratio,
             "Duration": request.duration,
+            "AudioGeneration": request.audio_generation,
             "InputComplianceCheck": config.input_compliance_check,
             "OutputComplianceCheck": config.output_compliance_check,
         },

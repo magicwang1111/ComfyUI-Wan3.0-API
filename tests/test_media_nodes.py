@@ -76,6 +76,7 @@ def test_node_mappings_and_public_contracts():
     assert text["required"]["resolution"][0] == ["480P", "720P", "1080P"]
     assert text["required"]["duration"][0] == [-1, *range(2, 31)]
     assert text["optional"]["super_resolution"][0] == ["Disabled", "2K", "4K"]
+    assert text["optional"]["audio_generation"][0] == ["Enabled", "Disabled"]
     assert nodes.WanTextToVideo.RETURN_NAMES == ("video_url", "video_id", "task_id")
     preview_inputs = nodes.WanPreviewVideo.INPUT_TYPES()["required"]
     assert list(preview_inputs) == ["video_url"]
@@ -101,6 +102,24 @@ def test_node_maps_super_resolution_separately():
         )
     assert captured["request"].resolution == "1080P"
     assert captured["request"].super_resolution == "2K"
+
+
+def test_node_enables_audio_generation_by_default_and_can_disable_it():
+    captured = []
+
+    def fake_generate(request, media_items, **kwargs):
+        captured.append(request)
+        return fake_result()
+
+    with mock.patch.object(nodes, "_generate", side_effect=fake_generate):
+        node = nodes.WanTextToVideo()
+        node.generate("3.0", "demo", "720P", "16:9", 5)
+        node.generate(
+            "3.0", "demo", "720P", "16:9", 5,
+            audio_generation="Disabled",
+        )
+    assert captured[0].audio_generation == "Enabled"
+    assert captured[1].audio_generation == "Disabled"
 
 
 def test_frame_node_maps_first_and_last():

@@ -14,6 +14,7 @@ import folder_paths
 from .config import load_json_config, load_oss_config, load_tencent_config
 from .media import audio_to_blob, first_image_blob, image_batch_to_blobs, video_to_blob
 from .models import (
+    AUDIO_GENERATION_OPTIONS,
     ASPECT_RATIOS,
     DURATIONS,
     MODEL_VERSIONS,
@@ -69,6 +70,7 @@ def _request(
     seed,
     session_id,
     super_resolution="Disabled",
+    audio_generation="Enabled",
 ) -> WanVideoRequest:
     return WanVideoRequest(
         model_version=str(model_version),
@@ -81,6 +83,7 @@ def _request(
         enhance_prompt=str(enhance_prompt or "Disabled"),
         seed=None if seed is None or int(seed) < 0 else int(seed),
         super_resolution=str(super_resolution or "Disabled"),
+        audio_generation=str(audio_generation or "Enabled"),
     )
 
 
@@ -152,6 +155,7 @@ def _common_optional() -> dict:
         "enhance_prompt": (["Disabled", "Enabled"], {"default": "Disabled"}),
         "seed": ("INT", {"default": -1, "min": -1, "max": 2147483647, "step": 1}),
         "super_resolution": (SUPER_RESOLUTIONS, {"default": "Disabled"}),
+        "audio_generation": (AUDIO_GENERATION_OPTIONS, {"default": "Enabled"}),
     }
 
 
@@ -176,10 +180,12 @@ class WanTextToVideo:
         enhance_prompt="Disabled",
         seed=-1,
         super_resolution="Disabled",
+        audio_generation="Enabled",
     ):
         request = _request(
             model_version, prompt, resolution, aspect_ratio, duration,
             negative_prompt, enhance_prompt, seed, _session_id(), super_resolution,
+            audio_generation,
         )
         result = _generate(request, [], prompt_required=True)
         return (result.video_url, result.video_id, result.task_id)
@@ -207,6 +213,7 @@ class WanFrameToVideo:
         enhance_prompt="Disabled",
         seed=-1,
         super_resolution="Disabled",
+        audio_generation="Enabled",
         first_frame=None,
         last_frame=None,
     ):
@@ -220,6 +227,7 @@ class WanFrameToVideo:
         request = _request(
             model_version, prompt, resolution, "adaptive", duration,
             negative_prompt, enhance_prompt, seed, _session_id(), super_resolution,
+            audio_generation,
         )
         result = _generate(request, media, prompt_required=False)
         return (result.video_url, result.video_id, result.task_id)
@@ -250,6 +258,7 @@ class WanReferenceToVideo:
         enhance_prompt="Disabled",
         seed=-1,
         super_resolution="Disabled",
+        audio_generation="Enabled",
         reference_images=None,
         **kwargs,
     ):
@@ -276,6 +285,7 @@ class WanReferenceToVideo:
         request = _request(
             model_version, prompt, resolution, aspect_ratio, duration,
             negative_prompt, enhance_prompt, seed, _session_id(), super_resolution,
+            audio_generation,
         )
         result = _generate(request, media, prompt_required=False)
         return (result.video_url, result.video_id, result.task_id)

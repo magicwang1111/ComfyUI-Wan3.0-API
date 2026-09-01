@@ -87,6 +87,7 @@ def test_tencent_payload_and_signature_headers():
         enhance_prompt="Enabled",
         seed=7,
         super_resolution="4K",
+        audio_generation="Disabled",
         file_infos=[{"Type": "Url", "Category": "Image", "Usage": "FirstFrame", "Url": "https://x"}],
     )
     payload = build_payload(config, request)
@@ -94,6 +95,8 @@ def test_tencent_payload_and_signature_headers():
     assert payload["ModelVersion"] == "3.0-prime"
     assert payload["OutputConfig"]["StorageMode"] == "Temporary"
     assert payload["OutputConfig"]["Resolution"] == "4K"
+    assert payload["OutputConfig"]["AudioGeneration"] == "Disabled"
+    assert payload["Seed"] == 7
     assert payload["FileInfos"][0]["Type"] == "Url"
     headers = TencentVodClient(config).headers("CreateAigcVideoTask", payload, timestamp=1700000000)
     assert headers["Host"] == "vod.tencentcloudapi.com"
@@ -125,6 +128,7 @@ def test_tencent_payload_preserves_smart_duration():
     )
     payload = build_payload(tencent_config(), request)
     assert payload["OutputConfig"]["Duration"] == -1
+    assert payload["OutputConfig"]["AudioGeneration"] == "Enabled"
 
 
 def test_tencent_api_error_is_actionable_and_secret_free():

@@ -50,6 +50,8 @@ The same values can be supplied through the environment variables documented in 
 
 All generation nodes return `video_url`, `video_id`, and `task_id`. Keep the TaskId when diagnosing or recovering an interrupted job.
 
+All generation nodes expose `audio_generation`, defaulting to `Enabled`. Tencent receives this as `OutputConfig.AudioGeneration`; set it to `Disabled` for video without a generated audio track. The optional `seed` remains available: use a fixed value for more reproducible output, `-1` to omit the field, or ComfyUI's control-after-generate setting to randomize/increment it between runs.
+
 ## Limits
 
 - Prompt: at most 20,000 characters.

@@ -7,6 +7,7 @@ from typing import Any
 MODEL_VERSIONS = ["3.0", "3.0-prime"]
 RESOLUTIONS = ["480P", "720P", "1080P"]
 SUPER_RESOLUTIONS = ["Disabled", "2K", "4K"]
+AUDIO_GENERATION_OPTIONS = ["Enabled", "Disabled"]
 DURATIONS = [-1, *range(2, 31)]
 ASPECT_RATIOS = ["16:9", "9:16", "4:3", "3:4", "1:1", "adaptive"]
 PROMPT_MAX_CHARS = 20000
@@ -38,6 +39,7 @@ class WanVideoRequest:
     enhance_prompt: str = "Disabled"
     seed: int | None = None
     super_resolution: str = "Disabled"
+    audio_generation: str = "Enabled"
     file_infos: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -66,6 +68,8 @@ def validate_request(request: WanVideoRequest, *, prompt_required: bool) -> None
         raise ValueError(
             f"super_resolution must be one of: {', '.join(SUPER_RESOLUTIONS)}"
         )
+    if request.audio_generation not in AUDIO_GENERATION_OPTIONS:
+        raise ValueError("audio_generation must be Enabled or Disabled.")
     if request.aspect_ratio not in ASPECT_RATIOS:
         raise ValueError(f"aspect_ratio must be one of: {', '.join(ASPECT_RATIOS)}")
     if prompt_required and not request.prompt.strip():
