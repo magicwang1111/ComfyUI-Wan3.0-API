@@ -22,6 +22,10 @@ class VapeurSubmissionUncertain(VapeurError):
     pass
 
 
+class VapeurTransientError(VapeurError):
+    pass
+
+
 class VapeurTaskError(VapeurError):
     def __init__(self, message: str, task_id: str, terminal: bool):
         super().__init__(message)
@@ -88,7 +92,12 @@ class VapeurClient:
                 json=payload, timeout=self.config.request_timeout, allow_redirects=False,
             )
         except requests.RequestException as exc:
+            if method == "GET":
+                error_type = VapeurTransientError if isinstance(exc, (requests.Timeout, requests.ConnectionError)) else VapeurError
+                raise error_type(f"Vapeur task query failed ({type(exc).__name__}).") from None
             raise VapeurError(f"Vapeur {method} failed ({type(exc).__name__}); submission outcome may be unknown. Do not automatically resubmit.") from None
+        if method == "GET" and response.status_code in {408, 429, 500, 502, 503, 504}:
+            raise VapeurTransientError(f"Vapeur task query returned HTTP {response.status_code}.")
         try:
             data = response.json()
         except ValueError:
@@ -134,11 +143,27 @@ class VapeurClient:
     def wait_for_task(self, task_id: str) -> dict:
         started = time.monotonic()
         last_status = None
+        consecutive_errors = 0
         while True:
             try:
                 detail = self.describe_task(task_id)
+            except VapeurTransientError as exc:
+                consecutive_errors += 1
+                remaining = self.config.max_wait_seconds - (time.monotonic() - started)
+                if consecutive_errors > 5 or remaining <= 0:
+                    raise VapeurTaskError(
+                        f"Vapeur task {task_id}: query retries exhausted or wait timed out: {exc} "
+                        "Cloud task may still be running; query this task_id to recover.", task_id, False,
+                    ) from None
+                delay = min(max(1.0, self.config.poll_interval) * 2 ** (consecutive_errors - 1), 30.0, remaining)
+                print(f"[Wan 3.0 API] Vapeur task {task_id}: {exc} Retrying query {consecutive_errors}/5 in {delay:g}s.")
+                time.sleep(delay)
+                if time.monotonic() - started >= self.config.max_wait_seconds:
+                    raise VapeurTaskError(f"Vapeur task {task_id} timed out; query this task_id to recover.", task_id, False)
+                continue
             except VapeurError as exc:
                 raise VapeurTaskError(f"Vapeur task {task_id}: {exc}; query this task_id to recover.", task_id, False) from None
+            consecutive_errors = 0
             status = self.check_task(detail, task_id)
             if status != last_status:
                 print(f"[Wan 3.0 API] Vapeur task {task_id}: {status}")

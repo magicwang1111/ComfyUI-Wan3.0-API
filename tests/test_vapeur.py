@@ -7,7 +7,7 @@ import requests
 from wan3_api import config, nodes
 from wan3_api.models import MediaBlob, TaskSubmission, UploadedObject, WanVideoRequest
 from wan3_api.vapeur import (
-    VapeurClient, VapeurError, VapeurTaskError, VapeurSubmissionUncertain,
+    VapeurClient, VapeurError, VapeurTaskError, VapeurSubmissionUncertain, VapeurTransientError,
     build_payload, video_result,
 )
 
@@ -176,3 +176,60 @@ def test_vapeur_oss_retention(error, deletes):
     ):
         nodes._generate(request(), [(MediaBlob(b"x", "image/jpeg", "jpg"), "Image", "FirstFrame")], prompt_required=True)
     assert oss.delete.call_count == deletes
+
+
+@pytest.mark.parametrize("failure", [requests.ReadTimeout(), requests.ConnectionError(), 408, 429, 500, 502, 503, 504])
+def test_transient_query_errors_retry_without_resubmitting(failure):
+    success = mock.Mock(status_code=200)
+    success.json.return_value = {"output": {"task_status": "SUCCEEDED"}}
+    failed = mock.Mock(status_code=failure) if isinstance(failure, int) else failure
+    with VapeurClient(settings()) as client, mock.patch("wan3_api.vapeur.time.sleep") as sleep:
+        client.session.request = mock.Mock(side_effect=[failed, success])
+        assert client.wait_for_task("existing-task")["output"]["task_status"] == "SUCCEEDED"
+        assert [call.args[0] for call in client.session.request.call_args_list] == ["GET", "GET"]
+        assert all(call.args[1].endswith("/existing-task") for call in client.session.request.call_args_list)
+        sleep.assert_called_once_with(5)
+
+
+def test_query_retries_are_bounded_and_nonterminal():
+    with VapeurClient(settings()) as client, mock.patch("wan3_api.vapeur.time.sleep") as sleep:
+        client.session.request = mock.Mock(side_effect=requests.ReadTimeout())
+        with pytest.raises(VapeurTaskError, match="existing-task") as exc:
+            client.wait_for_task("existing-task")
+        assert not exc.value.terminal
+        assert "submission outcome" not in str(exc.value)
+        assert client.session.request.call_count == 6
+        assert [call.args[0] for call in sleep.call_args_list] == [5, 10, 20, 30, 30]
+
+
+def test_retry_stops_at_wait_deadline():
+    with VapeurClient(settings()) as client, mock.patch("wan3_api.vapeur.time.sleep") as sleep:
+        client.describe_task = mock.Mock(side_effect=VapeurTransientError("timeout"))
+        with mock.patch("wan3_api.vapeur.time.monotonic", side_effect=[0, 3599, 3600]):
+            with pytest.raises(VapeurTaskError, match="timed out") as exc:
+                client.wait_for_task("task")
+        assert not exc.value.terminal
+        assert client.describe_task.call_count == 1
+        sleep.assert_called_once_with(1)
+
+
+def test_successful_poll_resets_consecutive_errors():
+    with VapeurClient(settings()) as client, mock.patch("wan3_api.vapeur.time.sleep") as sleep:
+        client.describe_task = mock.Mock(side_effect=[
+            VapeurTransientError("timeout"), {"output": {"task_status": "RUNNING"}},
+            VapeurTransientError("timeout"), {"output": {"task_status": "SUCCEEDED"}},
+        ])
+        client.wait_for_task("task")
+        assert [call.args[0] for call in sleep.call_args_list] == [5, 5, 5]
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+def test_permanent_query_error_is_not_retried(status):
+    response = mock.Mock(status_code=status)
+    response.json.return_value = {"error": {"message": "invalid request"}}
+    with VapeurClient(settings()) as client, mock.patch("wan3_api.vapeur.time.sleep") as sleep:
+        client.session.request = mock.Mock(return_value=response)
+        with pytest.raises(VapeurTaskError):
+            client.wait_for_task("task")
+        assert client.session.request.call_count == 1
+        sleep.assert_not_called()
