@@ -22,7 +22,7 @@ def load_package():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Paid Wan 3.0 Tencent VOD smoke test")
+    parser = argparse.ArgumentParser(description="Paid Wan 3.0 smoke test using the configured provider")
     parser.add_argument("--confirm-paid", action="store_true")
     parser.add_argument("--prompt", default="A calm lake reflecting morning light, cinematic composition.")
     args = parser.parse_args()
@@ -44,4 +44,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

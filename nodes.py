@@ -11,7 +11,11 @@ import requests
 
 import folder_paths
 
-from .config import load_json_config, load_oss_config, load_tencent_config
+from .config import load_json_config, load_oss_config, load_tencent_config, load_provider, load_vapeur_config
+from .vapeur import (
+    VapeurClient, VapeurTaskError, VapeurSubmissionUncertain,
+    build_payload as vapeur_payload, video_result as vapeur_result,
+)
 from .media import audio_to_blob, first_image_blob, image_batch_to_blobs, video_to_blob
 from .models import (
     AUDIO_GENERATION_OPTIONS,
@@ -97,43 +101,55 @@ def _cleanup(oss: OssClient, object_keys: list[str]) -> None:
 
 def _generate(request: WanVideoRequest, media: list[tuple[MediaBlob, str, str]], *, prompt_required: bool):
     data = load_json_config()
-    tencent_config = load_tencent_config(data)
+    if load_provider(data) == "vapeur":
+        api_config = load_vapeur_config(data)
+        client_type = VapeurClient
+        result_parser = vapeur_result
+        vapeur_payload(api_config, request)
+    else:
+        api_config = load_tencent_config(data)
+        client_type = TencentVodClient
+        result_parser = video_result
     if not media:
-        with TencentVodClient(tencent_config) as client:
+        with client_type(api_config) as client:
             submission = client.create_video(request, prompt_required=prompt_required)
             task = client.wait_for_task(submission.task_id)
-            return video_result(task, submission)
+            return result_parser(task, submission)
 
     oss_config = load_oss_config(data)
-    if oss_config.signed_url_expires < tencent_config.max_wait_seconds + 600:
+    if oss_config.signed_url_expires < api_config.max_wait_seconds + 600:
         raise ValueError(
-            "oss_signed_url_expires must be at least tencent_max_wait_seconds + 600 seconds."
+            "oss_signed_url_expires must be at least the provider max_wait_seconds + 600 seconds."
         )
     object_keys: list[str] = []
     submission: TaskSubmission | None = None
     terminal = False
+    submission_uncertain = False
     with OssClient(oss_config) as oss:
         try:
             for index, (blob, category, usage) in enumerate(media, start=1):
                 object_key = _object_key(oss_config.prefix, request.session_id, blob.extension)
                 try:
-                    uploaded = oss.upload(object_key, blob, timeout=tencent_config.request_timeout)
+                    uploaded = oss.upload(object_key, blob, timeout=api_config.request_timeout)
                 except Exception as exc:
                     raise RuntimeError(f"OSS {category} upload {index} failed: {exc}") from exc
                 object_keys.append(uploaded.object_key)
                 request.file_infos.append(_file_info(uploaded.url, category, usage))
 
-            with TencentVodClient(tencent_config) as client:
+            with client_type(api_config) as client:
                 submission = client.create_video(request, prompt_required=prompt_required)
                 try:
                     task = client.wait_for_task(submission.task_id)
                     terminal = True
-                except TencentVodTaskError as exc:
+                except (TencentVodTaskError, VapeurTaskError) as exc:
                     terminal = exc.terminal
                     raise
-                return video_result(task, submission)
+                return result_parser(task, submission)
+        except VapeurSubmissionUncertain:
+            submission_uncertain = True
+            raise
         finally:
-            if oss_config.cleanup_after_task and (submission is None or terminal):
+            if oss_config.cleanup_after_task and not submission_uncertain and (submission is None or terminal):
                 _cleanup(oss, object_keys)
 
 
@@ -310,7 +326,18 @@ class WanQueryTask:
         task_id = str(task_id or "").strip()
         if not task_id:
             raise ValueError("task_id is required.")
-        config = load_tencent_config()
+        data = load_json_config()
+        if load_provider(data) == "vapeur":
+            with VapeurClient(load_vapeur_config(data)) as client:
+                detail = client.wait_for_task(task_id) if wait_for_completion else client.describe_task(task_id)
+                status = client.check_task(detail, task_id)
+                output = detail.get("output") or {}
+                url = str(output.get("video_url") or "")
+                if status == "SUCCEEDED":
+                    url = vapeur_result(detail, TaskSubmission(task_id, str(detail.get("request_id") or ""))).video_url
+                result_json = json.dumps(sanitize_task(detail), ensure_ascii=False, separators=(",", ":"))
+                return (status, url, task_id if url else "", task_id, result_json)
+        config = load_tencent_config(data)
         with TencentVodClient(config) as client:
             if wait_for_completion:
                 task = client.wait_for_task(task_id)

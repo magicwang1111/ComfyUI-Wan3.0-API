@@ -195,7 +195,7 @@ def test_query_result_is_sanitized():
     client.__enter__.return_value = client
     client.wait_for_task.return_value = task
     client.status.side_effect = lambda value: value["Status"]
-    with mock.patch.object(nodes, "load_tencent_config"), mock.patch.object(nodes, "TencentVodClient", return_value=client):
+    with mock.patch.object(nodes, "load_json_config", return_value={}), mock.patch.object(nodes, "load_tencent_config"), mock.patch.object(nodes, "TencentVodClient", return_value=client):
         status, url, video_id, task_id, result_json = nodes.WanQueryTask().query("task", True)
     assert (status, url, video_id, task_id) == ("FINISH", "https://host/v.mp4?token=secret", "file", "task")
     assert "token=secret" not in result_json

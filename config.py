@@ -2,12 +2,51 @@ from __future__ import annotations
 
 import json
 import os
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT_DIR / "config.local.json"
+
+
+@dataclass(frozen=True)
+class VapeurConfig:
+    api_key: str
+    base_url: str
+    region: str
+    poll_interval: float
+    request_timeout: int
+    max_wait_seconds: int
+
+
+def load_provider(data: dict | None = None) -> str:
+    data = load_json_config() if data is None else data
+    provider = str(_value(data, "provider", "WAN3_PROVIDER", "tencent")).strip().lower()
+    if provider not in {"tencent", "vapeur"}:
+        raise ValueError("provider must be tencent or vapeur.")
+    return provider
+
+
+def load_vapeur_config(data: dict | None = None) -> VapeurConfig:
+    data = load_json_config() if data is None else data
+    api_key = str(_value(data, "vapeur_api_key", "VAPEUR_API_KEY", "")).strip()
+    if not api_key:
+        raise ValueError("Vapeur requires vapeur_api_key in config.local.json or VAPEUR_API_KEY.")
+    base_url = str(_value(data, "vapeur_base_url", "VAPEUR_BASE_URL", "https://api.vapeur.ai")).strip().rstrip("/")
+    parsed = urlsplit(base_url)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.path or parsed.query or parsed.fragment or parsed.username or parsed.password:
+        raise ValueError("vapeur_base_url must be an HTTPS origin without a path (do not append /v1).")
+    region = str(_value(data, "vapeur_region", "VAPEUR_REGION", "cn")).strip().lower()
+    if region not in {"cn", "glb"}:
+        raise ValueError("vapeur_region must be cn or glb.")
+    return VapeurConfig(
+        api_key=api_key, base_url=base_url, region=region,
+        poll_interval=_positive_float(_value(data, "vapeur_poll_interval", "VAPEUR_POLL_INTERVAL", 5), "vapeur_poll_interval"),
+        request_timeout=_positive_int(_value(data, "vapeur_request_timeout", "VAPEUR_REQUEST_TIMEOUT", 120), "vapeur_request_timeout", 5),
+        max_wait_seconds=_positive_int(_value(data, "vapeur_max_wait_seconds", "VAPEUR_MAX_WAIT_SECONDS", 3600), "vapeur_max_wait_seconds", 30),
+    )
 
 
 @dataclass(frozen=True)

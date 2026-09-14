@@ -1,4 +1,11 @@
 {
+  "provider": "tencent",
+  "vapeur_base_url": "https://api.vapeur.ai",
+  "vapeur_api_key": "",
+  "vapeur_region": "cn",
+  "vapeur_poll_interval": 5,
+  "vapeur_request_timeout": 120,
+  "vapeur_max_wait_seconds": 3600,
   "oss_endpoint": "oss-cn-hangzhou.aliyuncs.com",
   "oss_access_key_id": "",
   "oss_access_key_secret": "",
@@ -17,4 +24,3 @@
   "tencent_input_compliance_check": "Enabled",
   "tencent_output_compliance_check": "Enabled"
 }
-
