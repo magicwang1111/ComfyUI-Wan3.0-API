@@ -1,5 +1,10 @@
 {
   "provider": "tencent",
+  "kuaizi_base_url": "https://aiopenapi.kuaizi.cn",
+  "kuaizi_api_key": "",
+  "kuaizi_poll_interval": 15,
+  "kuaizi_request_timeout": 120,
+  "kuaizi_max_wait_seconds": 3600,
   "vapeur_base_url": "https://api.vapeur.ai",
   "vapeur_api_key": "",
   "vapeur_region": "cn",

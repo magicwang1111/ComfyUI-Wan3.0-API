@@ -11,7 +11,11 @@ import requests
 
 import folder_paths
 
-from .config import load_json_config, load_oss_config, load_tencent_config, load_provider, load_vapeur_config
+from .config import load_json_config, load_oss_config, load_tencent_config, load_provider, load_vapeur_config, load_kuaizi_config
+from .kuaizi import (
+    KuaiziClient, KuaiziTaskError, KuaiziSubmissionUncertain,
+    build_payload as kuaizi_payload, video_result as kuaizi_result,
+)
 from .vapeur import (
     VapeurClient, VapeurTaskError, VapeurSubmissionUncertain,
     build_payload as vapeur_payload, video_result as vapeur_result,
@@ -101,7 +105,13 @@ def _cleanup(oss: OssClient, object_keys: list[str]) -> None:
 
 def _generate(request: WanVideoRequest, media: list[tuple[MediaBlob, str, str]], *, prompt_required: bool):
     data = load_json_config()
-    if load_provider(data) == "vapeur":
+    provider = load_provider(data)
+    if provider == "kuaizi":
+        api_config = load_kuaizi_config(data)
+        client_type = KuaiziClient
+        result_parser = kuaizi_result
+        kuaizi_payload(request)
+    elif provider == "vapeur":
         api_config = load_vapeur_config(data)
         client_type = VapeurClient
         result_parser = vapeur_result
@@ -141,11 +151,11 @@ def _generate(request: WanVideoRequest, media: list[tuple[MediaBlob, str, str]],
                 try:
                     task = client.wait_for_task(submission.task_id)
                     terminal = True
-                except (TencentVodTaskError, VapeurTaskError) as exc:
+                except (TencentVodTaskError, VapeurTaskError, KuaiziTaskError) as exc:
                     terminal = exc.terminal
                     raise
                 return result_parser(task, submission)
-        except VapeurSubmissionUncertain:
+        except (VapeurSubmissionUncertain, KuaiziSubmissionUncertain):
             submission_uncertain = True
             raise
         finally:
@@ -327,14 +337,18 @@ class WanQueryTask:
         if not task_id:
             raise ValueError("task_id is required.")
         data = load_json_config()
-        if load_provider(data) == "vapeur":
-            with VapeurClient(load_vapeur_config(data)) as client:
+        provider = load_provider(data)
+        if provider in {"vapeur", "kuaizi"}:
+            client_type = KuaiziClient if provider == "kuaizi" else VapeurClient
+            api_config = load_kuaizi_config(data) if provider == "kuaizi" else load_vapeur_config(data)
+            result_parser = kuaizi_result if provider == "kuaizi" else vapeur_result
+            with client_type(api_config) as client:
                 detail = client.wait_for_task(task_id) if wait_for_completion else client.describe_task(task_id)
                 status = client.check_task(detail, task_id)
                 output = detail.get("output") or {}
                 url = str(output.get("video_url") or "")
                 if status == "SUCCEEDED":
-                    url = vapeur_result(detail, TaskSubmission(task_id, str(detail.get("request_id") or ""))).video_url
+                    url = result_parser(detail, TaskSubmission(task_id, str(detail.get("request_id") or ""))).video_url
                 result_json = json.dumps(sanitize_task(detail), ensure_ascii=False, separators=(",", ":"))
                 return (status, url, task_id if url else "", task_id, result_json)
         config = load_tencent_config(data)

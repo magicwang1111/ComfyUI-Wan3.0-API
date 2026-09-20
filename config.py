@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT_DIR / "config.local.json"
+PRIMARY_CONFIG_PATH = ROOT_DIR / "config.json"
 
 
 @dataclass(frozen=True)
@@ -24,8 +25,8 @@ class VapeurConfig:
 def load_provider(data: dict | None = None) -> str:
     data = load_json_config() if data is None else data
     provider = str(_value(data, "provider", "WAN3_PROVIDER", "tencent")).strip().lower()
-    if provider not in {"tencent", "vapeur"}:
-        raise ValueError("provider must be tencent or vapeur.")
+    if provider not in {"tencent", "vapeur", "kuaizi"}:
+        raise ValueError("provider must be tencent, vapeur, or kuaizi.")
     return provider
 
 
@@ -46,6 +47,37 @@ def load_vapeur_config(data: dict | None = None) -> VapeurConfig:
         poll_interval=_positive_float(_value(data, "vapeur_poll_interval", "VAPEUR_POLL_INTERVAL", 5), "vapeur_poll_interval"),
         request_timeout=_positive_int(_value(data, "vapeur_request_timeout", "VAPEUR_REQUEST_TIMEOUT", 120), "vapeur_request_timeout", 5),
         max_wait_seconds=_positive_int(_value(data, "vapeur_max_wait_seconds", "VAPEUR_MAX_WAIT_SECONDS", 3600), "vapeur_max_wait_seconds", 30),
+    )
+
+
+@dataclass(frozen=True)
+class KuaiziConfig:
+    api_key: str
+    base_url: str
+    poll_interval: float
+    request_timeout: int
+    max_wait_seconds: int
+
+
+def load_kuaizi_config(data: dict | None = None) -> KuaiziConfig:
+    data = load_json_config() if data is None else data
+    api_key = str(_value(data, "kuaizi_api_key", "KUAIZI_API_KEY", "")).strip()
+    if not api_key:
+        raise ValueError("Kuaizi requires kuaizi_api_key in config.json/config.local.json or KUAIZI_API_KEY.")
+    base_url = str(_value(data, "kuaizi_base_url", "KUAIZI_BASE_URL", "https://aiopenapi.kuaizi.cn")).strip().rstrip("/")
+    parsed = urlsplit(base_url)
+    if (parsed.scheme != "https" or not parsed.netloc or parsed.path not in {"", "/ai-open-platform-api"}
+            or parsed.query or parsed.fragment or parsed.username or parsed.password):
+        raise ValueError("kuaizi_base_url must be an HTTPS origin, optionally ending in /ai-open-platform-api.")
+    if not parsed.path:
+        base_url += "/ai-open-platform-api"
+    poll_interval = _positive_float(_value(data, "kuaizi_poll_interval", "KUAIZI_POLL_INTERVAL", 15), "kuaizi_poll_interval")
+    if poll_interval < 15:
+        raise ValueError("kuaizi_poll_interval must be at least 15 seconds.")
+    return KuaiziConfig(
+        api_key=api_key, base_url=base_url, poll_interval=poll_interval,
+        request_timeout=_positive_int(_value(data, "kuaizi_request_timeout", "KUAIZI_REQUEST_TIMEOUT", 120), "kuaizi_request_timeout", 5),
+        max_wait_seconds=_positive_int(_value(data, "kuaizi_max_wait_seconds", "KUAIZI_MAX_WAIT_SECONDS", 3600), "kuaizi_max_wait_seconds", 30),
     )
 
 
@@ -75,7 +107,11 @@ class TencentConfig:
 
 
 def load_json_config(path: Path | None = None) -> dict:
-    path = path or CONFIG_PATH
+    if path is None:
+        data = load_json_config(CONFIG_PATH)
+        primary = load_json_config(PRIMARY_CONFIG_PATH)
+        data.update({key: value for key, value in primary.items() if _present(primary, key)})
+        return data
     if not path.exists():
         return {}
     try:

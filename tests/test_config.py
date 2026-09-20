@@ -26,6 +26,26 @@ def test_bom_json_and_environment_fallback(tmp_path):
     assert loaded.sub_app_id == 123
 
 
+def test_primary_config_overrides_legacy_and_reloads(tmp_path):
+    legacy = tmp_path / "config.local.json"
+    primary = tmp_path / "config.json"
+    legacy.write_text(json.dumps({"provider": "tencent", "oss_bucket": "keep", "kuaizi_api_key": "local-key"}), encoding="utf-8")
+    primary.write_text(json.dumps({"provider": "kuaizi", "kuaizi_api_key": ""}), encoding="utf-8-sig")
+    with mock.patch.object(config, "CONFIG_PATH", legacy), mock.patch.object(config, "PRIMARY_CONFIG_PATH", primary):
+        data = config.load_json_config()
+        assert data == {"provider": "kuaizi", "oss_bucket": "keep", "kuaizi_api_key": "local-key"}
+        primary.write_text(json.dumps({"provider": "vapeur"}), encoding="utf-8")
+        assert config.load_provider() == "vapeur"
+        assert config.load_json_config(legacy)["provider"] == "tencent"
+
+
+def test_legacy_config_without_primary(tmp_path):
+    legacy = tmp_path / "config.local.json"
+    legacy.write_text('{"provider": "vapeur"}', encoding="utf-8")
+    with mock.patch.object(config, "CONFIG_PATH", legacy), mock.patch.object(config, "PRIMARY_CONFIG_PATH", tmp_path / "missing.json"):
+        assert config.load_provider() == "vapeur"
+
+
 def test_empty_json_value_falls_back_to_environment():
     with mock.patch.dict(
         "os.environ",

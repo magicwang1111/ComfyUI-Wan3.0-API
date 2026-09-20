@@ -1,18 +1,47 @@
 # ComfyUI Wan 3.0 API
 
-ComfyUI nodes for Wan 3.0 and Wan 3.0 Prime video generation through Tencent VOD or Vapeur. Select the provider in `config.local.json`. Local images, videos, and audios are uploaded to a private Alibaba Cloud OSS prefix and passed to the selected provider as short-lived signed URLs. The Preview node saves the original MP4 under ComfyUI `output/video`.
+ComfyUI nodes for Wan 3.0 and Wan 3.0 Prime video generation through Tencent VOD, Vapeur, or Kuaizi. Select the provider in `config.json` (legacy `config.local.json` is also supported). Local images, videos, and audios are uploaded to a private Alibaba Cloud OSS prefix and passed to the selected provider as short-lived signed URLs. The Preview node saves the original MP4 under ComfyUI `output/video`.
 
-Video generation is a paid operation on both providers. OSS hosts input media separately from the Wan generation charge.
+Video generation is a paid operation on all providers. OSS hosts input media separately from the Wan generation charge.
 
 ## Security first
 
-Do not reuse credentials that have appeared in chat, logs, screenshots, or source control. Rotate them first, then place the new values only in `config.local.json`. That file is ignored by Git.
+Do not reuse credentials that have appeared in chat, logs, screenshots, or source control. Rotate them first, then place the new values only in `config.json` or `config.local.json`. Both files are ignored by Git.
 
 Use an Alibaba Cloud RAM identity restricted to `PutObject` and `DeleteObject` under the configured temporary prefix. Keep the bucket private. Configure an OSS lifecycle rule that deletes objects under `<oss_prefix>/wan3/` after one day; signed URL expiry does not delete objects.
 
 ## Provider selection
 
-`config.local.json` is read on each generation/query. Set `provider` to `tencent` or `vapeur`; omitting it preserves Tencent behavior. Restart ComfyUI once after installing this code update. Subsequent configuration changes do not require a restart, but generation nodes must execute again (for example, change the seed) to avoid ComfyUI reusing a cached result.
+Both configuration files are read on each generation/query. Non-empty values in `config.json` override the same keys in `config.local.json`; other legacy settings, including OSS credentials, remain available. Set `provider` to `tencent`, `vapeur`, or `kuaizi`; omitting it preserves Tencent behavior (unless `WAN3_PROVIDER` is set). Restart ComfyUI once after installing this code update. Subsequent configuration changes do not require a restart, but generation nodes must execute again (for example, change the seed) to avoid ComfyUI reusing a cached result.
+
+### Kuaizi
+
+Set these fields in `config.json` to use Kuaizi with your own enabled API key:
+
+```json
+{
+  "provider": "kuaizi",
+  "kuaizi_base_url": "https://aiopenapi.kuaizi.cn",
+  "kuaizi_api_key": "YOUR_KUAIZI_API_KEY",
+  "kuaizi_poll_interval": 15,
+  "kuaizi_request_timeout": 120,
+  "kuaizi_max_wait_seconds": 3600
+}
+```
+
+The base URL accepts either the origin above or the same URL ending in `/ai-open-platform-api`; that prefix is added exactly once. The client sends `Authorization: Bearer ...` and `X-DashScope-Async: enable` when creating tasks. Creation uses `POST /api/v1/services/aigc/video-generation/video-synthesis`; queries use `GET /api/v1/tasks/{task_id}` under that prefix.
+
+Node model `3.0` maps to `wan3.0-video`, and `3.0-prime` maps to `wan3.0-video-prime`, with no region suffix. Existing text, first/last-frame, and image/video/audio reference nodes are supported. Local media still uses the existing OSS configuration; text-only generation does not require OSS. This integration does not add file/webpage input nodes.
+
+Keep `super_resolution` and `enhance_prompt` set to `Disabled`, and `negative_prompt` empty: these options are not in the supplied Kuaizi v1.2 protocol and are rejected before upload rather than silently ignored. `audio_generation` maps to `parameters.audio`; watermark is disabled. Fixed/smart duration, aspect ratio, resolution, and optional seed retain the existing node controls.
+
+Polling defaults to 15 seconds (minimum 15). Temporary query failures retry with bounded backoff, without resubmitting generation. Creation errors include the platform error code and `request_id`; `429 Throttling` requires waiting for capacity, while `429 InsufficientBalance` requires topping up. Creation is never automatically retried, avoiding duplicate paid jobs. HTTP 200 with `output.task_status=FAILED` is treated as a failed task. Inputs are retained if submission is uncertain or polling times out; they are cleaned after a known terminal state.
+
+The Query Task node must use the task's original provider. It returns the Kuaizi task ID as both `video_id` and `task_id`. According to the supplied platform documentation, the first successful URL may be temporary; download it promptly or query the same task later for the permanent stored URL. Kuaizi bills successful tasks by input-video plus output-video duration.
+
+Environment alternatives: `KUAIZI_API_KEY`, `KUAIZI_BASE_URL`, `KUAIZI_POLL_INTERVAL`, `KUAIZI_REQUEST_TIMEOUT`, and `KUAIZI_MAX_WAIT_SECONDS`. Non-empty JSON settings take precedence.
+
+### Vapeur
 
 Add these fields to your existing local configuration to use Vapeur:
 
@@ -45,7 +74,7 @@ Vapeur API references: [submit video](https://vapeur.apifox.cn/508059339e0), [qu
 
 ## Configuration
 
-Copy `config.example.json` to `config.local.json` and fill in rotated credentials:
+For a fresh install, copy `config.example.json` to `config.json` and fill in rotated credentials. Existing `config.local.json` does not need to be renamed or copied:
 
 ```json
 {
