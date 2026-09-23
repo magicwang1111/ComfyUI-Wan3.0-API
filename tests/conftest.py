@@ -2,6 +2,16 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+import requests
+
+
+@pytest.fixture(autouse=True)
+def block_live_network(monkeypatch):
+    def blocked(*args, **kwargs):
+        raise AssertionError("Offline tests must mock HTTP requests.")
+    monkeypatch.setattr(requests.Session, "send", blocked)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMFYUI_ROOT = REPO_ROOT.parent.parent
@@ -24,4 +34,3 @@ def load_package():
 
 
 load_package()
-

@@ -155,7 +155,7 @@ def test_reference_validation_and_order():
             reference_audio_1=audio(3),
         )
     assert [item[1] for item in captured["media"]] == ["Image", "Image", "Video", "Audio"]
-    with pytest.raises(ValueError, match="audio cannot be used alone"):
+    with mock.patch.object(nodes, "load_json_config", return_value={"provider": "tencent"}), pytest.raises(ValueError, match="require provider opc"):
         nodes.WanReferenceToVideo().generate(
             "3.0", "demo", "720P", "16:9", 5,
             reference_audio_1=audio(3),

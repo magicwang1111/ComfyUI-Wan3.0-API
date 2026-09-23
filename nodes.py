@@ -12,7 +12,10 @@ import requests
 import folder_paths
 
 from .config import load_json_config, load_oss_config, load_tencent_config, load_provider, load_vapeur_config, load_kuaizi_config, load_opc_config
-from .opc import OpcClient, video_result as opc_result
+from .opc import (
+    OpcClient, OpcTaskError, OpcSubmissionUncertain,
+    build_payload as opc_payload, validate_media as opc_validate_media, video_result as opc_result,
+)
 from .kuaizi import (
     KuaiziClient, KuaiziTaskError, KuaiziSubmissionUncertain,
     build_payload as kuaizi_payload, video_result as kuaizi_result,
@@ -108,11 +111,15 @@ def _generate(request: WanVideoRequest, media: list[tuple[MediaBlob, str, str]],
     data = load_json_config()
     provider = load_provider(data)
     if provider == "opc":
-        with OpcClient(load_opc_config(data)) as client:
-            submission = client.create_video(request, prompt_required=prompt_required, media=media)
-            task = client.wait_for_task(submission.task_id)
-            return opc_result(task, submission)
-    if provider == "kuaizi":
+        api_config = load_opc_config(data)
+        client_type = OpcClient
+        result_parser = opc_result
+        opc_payload(request)
+        opc_validate_media(
+            [(item.get("Category"), item.get("Usage")) for item in request.file_infos]
+            + [(category, usage) for _, category, usage in media]
+        )
+    elif provider == "kuaizi":
         api_config = load_kuaizi_config(data)
         client_type = KuaiziClient
         result_parser = kuaizi_result
@@ -157,11 +164,11 @@ def _generate(request: WanVideoRequest, media: list[tuple[MediaBlob, str, str]],
                 try:
                     task = client.wait_for_task(submission.task_id)
                     terminal = True
-                except (TencentVodTaskError, VapeurTaskError, KuaiziTaskError) as exc:
+                except (TencentVodTaskError, VapeurTaskError, KuaiziTaskError, OpcTaskError) as exc:
                     terminal = exc.terminal
                     raise
                 return result_parser(task, submission)
-        except (VapeurSubmissionUncertain, KuaiziSubmissionUncertain):
+        except (VapeurSubmissionUncertain, KuaiziSubmissionUncertain, OpcSubmissionUncertain):
             submission_uncertain = True
             raise
         finally:
@@ -272,6 +279,8 @@ class WanReferenceToVideo:
         optional["reference_images"] = ("IMAGE",)
         optional.update({f"reference_video_{index}": ("VIDEO",) for index in range(1, 6)})
         optional.update({f"reference_audio_{index}": ("AUDIO",) for index in range(1, 6)})
+        optional["reference_file_url"] = ("STRING", {"default": "", "tooltip": "OPC: public document URL; requires enhance_prompt Enabled."})
+        optional["reference_link_url"] = ("STRING", {"default": "", "tooltip": "OPC: public webpage URL; requires enhance_prompt Enabled."})
         return {"required": _common_required(aspect_ratio=True), "optional": optional}
 
     RETURN_TYPES = ("STRING", "STRING", "STRING")
@@ -299,8 +308,13 @@ class WanReferenceToVideo:
         audio_inputs = [kwargs.get(f"reference_audio_{index}") for index in range(1, 6)]
         video_blobs = [video_to_blob(item) for item in video_inputs if item is not None]
         audio_blobs = [audio_to_blob(item) for item in audio_inputs if item is not None]
-        if not image_blobs and not video_blobs:
-            raise ValueError("Reference mode requires at least one image or video; audio cannot be used alone.")
+        file_url = str(kwargs.get("reference_file_url") or "").strip()
+        link_url = str(kwargs.get("reference_link_url") or "").strip()
+        if file_url or link_url or (audio_blobs and not image_blobs and not video_blobs):
+            if load_provider(load_json_config()) != "opc":
+                raise ValueError("File/link inputs and audio-only reference mode currently require provider opc.")
+        if not image_blobs and not video_blobs and not audio_blobs and not file_url and not link_url:
+            raise ValueError("Reference mode requires at least one image, video, audio, file, or link.")
         video_duration = sum(blob.duration or 0 for blob in video_blobs)
         audio_duration = sum(blob.duration or 0 for blob in audio_blobs)
         if video_duration > 15:
@@ -319,6 +333,10 @@ class WanReferenceToVideo:
             negative_prompt, enhance_prompt, seed, _session_id(), super_resolution,
             audio_generation,
         )
+        if file_url:
+            request.file_infos.append(_file_info(file_url, "File", "Reference"))
+        if link_url:
+            request.file_infos.append(_file_info(link_url, "Link", "Reference"))
         result = _generate(request, media, prompt_required=False)
         return (result.video_url, result.video_id, result.task_id)
 

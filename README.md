@@ -1,6 +1,6 @@
 # ComfyUI Wan 3.0 API
 
-ComfyUI nodes for Wan 3.0 and Wan 3.0 Prime video generation through Tencent VOD, Vapeur, Kuaizi, or OPC. Select the provider in `config.json` (legacy `config.local.json` is also supported). Local images, videos, and audios use a private Alibaba Cloud OSS prefix, except OPC images which are sent directly as Data URLs. The Preview node saves the original MP4 under ComfyUI `output/video`.
+ComfyUI nodes for Wan 3.0 and Wan 3.0 Prime video generation through Tencent VOD, Vapeur, Kuaizi, or OPC. Select the provider in `config.json` (legacy `config.local.json` is also supported). Local images, videos, and audios use a private Alibaba Cloud OSS prefix. The Preview node saves the original MP4 under ComfyUI `output/video`.
 
 Video generation is a paid operation on all providers. OSS hosts input media separately from the Wan generation charge.
 
@@ -29,17 +29,19 @@ Add these fields to `config.local.json`. Remove any `provider` or `opc_*` overri
 }
 ```
 
-OPC submits JSON to `POST /v1/videos/generations` with Bearer authentication. Models `3.0` and `3.0-prime` map to `qwen/wan3.0-video/v1` and `qwen/wan3.0-video-prime/v1`, as listed by this platform's `/v1/models` endpoint. Non-empty JSON values override `OPC_API_KEY`, `OPC_BASE_URL`, `OPC_POLL_INTERVAL`, `OPC_REQUEST_TIMEOUT`, and `OPC_MAX_WAIT_SECONDS`.
+OPC submits the native Wan `model` / `input` / `parameters` JSON structure to `POST /v1/videos/generations` with Bearer authentication and `X-DashScope-Async: enable`. Models `3.0` and `3.0-prime` map to `qwen/wan3.0-video/v1` and `qwen/wan3.0-video-prime/v1`, as listed by this platform's `/v1/models` endpoint. Non-empty JSON values override `OPC_API_KEY`, `OPC_BASE_URL`, `OPC_POLL_INTERVAL`, `OPC_REQUEST_TIMEOUT`, and `OPC_MAX_WAIT_SECONDS`.
 
-Use Text To Video, Frame To Video with only `first_frame`, or Reference To Video with one image. A prompt is required in every mode. Local images are encoded as image Data URLs; OPC does not use OSS. Last frames, multiple images, reference video, and reference audio are rejected before submission.
+Text To Video requires a prompt. Frame To Video supports a first frame or a first/last-frame pair. Reference To Video supports up to 10 images, 5 videos, and 5 audios, including audio-only input. Prompt is optional when media is supplied. Local media uses the existing OSS upload and cleanup settings, so existing single-image OPC workflows now require OSS configuration too; text-only generation needs no OSS.
 
-Set a fixed positive duration, `seed=-1`, empty `negative_prompt`, and `enhance_prompt`/`super_resolution=Disabled`. Leave `audio_generation=Enabled`: OPC has no documented audio switch, so audio follows the provider's default. Watermark is disabled. Resolution and aspect ratio become an explicit pixel size (720P at 16:9 gives `1280x720`); adaptive local-image mode uses the image's ratio with the requested short-side resolution, rounded to even pixels. Actual size/duration availability is decided by the selected model. For externally supplied image URLs with adaptive ratio, size is omitted and the provider chooses it.
+Reference To Video also accepts an OPC-only `reference_file_url` (public document URL) or `reference_link_url` (public webpage URL). File and link are mutually exclusive; either can accompany image/video/audio references. Set `enhance_prompt=Enabled` when using file/link. These URLs are sent directly without uploading local files. First/last frames cannot be mixed with reference media, files, or links; a last frame requires a first frame.
+
+Resolution and aspect ratio map to `parameters.resolution` and `parameters.ratio`, retaining native `adaptive` behavior. Duration supports fixed 2-30 seconds and smart duration (`-1`). `audio_generation` controls `parameters.audio`, `enhance_prompt` controls `parameters.prompt_extend`, and a nonnegative seed maps to `parameters.seed` (`-1` omits it). Watermark is disabled. Keep `super_resolution=Disabled` and `negative_prompt` empty. Existing local-media validation limits and aspect-ratio choices below still apply; this update does not expose every upstream limit or ratio.
 
 The supplied async-task documentation confirms `GET /v1/tasks/{task_id}` with `Authorization: Bearer ...` and `Content-Type: application/json`. The task ID returned by creation is a path parameter, not a JSON body; the client URL-encodes it without adding or removing a provider prefix. Queries have no request body. The client retries temporary query failures and never automatically resubmits generation.
 
 Generation nodes automatically poll after submission. To resume an existing task, use Query Task with the original `task_id` and `provider=opc`: enable `wait_for_completion` to poll every 5 seconds by default (up to 3600 seconds), or disable it for one query. Connect its `video_url` output to Preview Video to download a completed result. Query Task must use the task's original provider.
 
-Integration verification: authentication, model discovery, and the task route were checked on 2026-09-23 without creating a paid job. The supplied documentation does not include task response examples; parsing currently accepts top-level, `data`, and Wan `output` envelopes with `task_id`/`id`, `task_status`/`status`, and `video_url`/`url`. Successful task polling and video download still need verification against a real task or the complete OPC task documentation.
+The [official Wan 3.0 API reference](https://docs.bailian.console.aliyun.com/zh/model-studio/wan3-video-generation-api-reference.md) documents the native media and parameter fields. On 2026-09-23, invalid-input diagnostics confirmed OPC forwards nested `input.media` and returns prefixed task IDs plus native `output.task_status`, `output.code`, and `output.message`. Both diagnostic tasks reached `FAILED` without producing video. Upstream `request_id` and router `mr_req_id` are retained in errors. Successful multimodal generation and download remain unverified. Download successful video URLs promptly: upstream task IDs and result URLs are valid for 24 hours.
 
 ### Kuaizi
 
@@ -132,8 +134,8 @@ The same values can be supplied through the environment variables documented in 
 ## Nodes
 
 - **Wan 3.0 API Text To Video** supports `3.0` and `3.0-prime`, native 480P/720P/1080P output, optional Tencent-only 2K/4K super-resolution, ratios from the supplied Wan guide, and smart (`-1`) or fixed 2-30 second duration. It does not use OSS.
-- **Wan 3.0 API Frame To Video** accepts a first frame, last frame, or both. Frames are uploaded to OSS and submitted as `FirstFrame` / `LastFrame`; aspect ratio is fixed to `adaptive`.
-- **Wan 3.0 API Reference To Video** accepts an IMAGE batch of up to 10 images, five VIDEO sockets, and five AUDIO sockets. Audio cannot be used alone. Reference video and audio are each limited to 15 seconds total.
+- **Wan 3.0 API Frame To Video** accepts a first frame, last frame, or both (OPC requires a first frame when using a last frame). Frames are uploaded to OSS and submitted as `FirstFrame` / `LastFrame`; aspect ratio is fixed to `adaptive`.
+- **Wan 3.0 API Reference To Video** accepts an IMAGE batch of up to 10 images, five VIDEO sockets, and five AUDIO sockets. OPC additionally supports audio-only references and public file/webpage URLs. Reference video and audio are each limited to 15 seconds total.
 - **Wan 3.0 API Query Task** performs one status query or waits for completion, allowing recovery from an interrupted workflow.
 - **Wan 3.0 API Preview Video** downloads the temporary result without re-encoding and shows a responsive video preview.
 
