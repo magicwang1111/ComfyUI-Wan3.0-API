@@ -11,7 +11,8 @@ import requests
 
 import folder_paths
 
-from .config import load_json_config, load_oss_config, load_tencent_config, load_provider, load_vapeur_config, load_kuaizi_config
+from .config import load_json_config, load_oss_config, load_tencent_config, load_provider, load_vapeur_config, load_kuaizi_config, load_opc_config
+from .opc import OpcClient, video_result as opc_result
 from .kuaizi import (
     KuaiziClient, KuaiziTaskError, KuaiziSubmissionUncertain,
     build_payload as kuaizi_payload, video_result as kuaizi_result,
@@ -106,6 +107,11 @@ def _cleanup(oss: OssClient, object_keys: list[str]) -> None:
 def _generate(request: WanVideoRequest, media: list[tuple[MediaBlob, str, str]], *, prompt_required: bool):
     data = load_json_config()
     provider = load_provider(data)
+    if provider == "opc":
+        with OpcClient(load_opc_config(data)) as client:
+            submission = client.create_video(request, prompt_required=prompt_required, media=media)
+            task = client.wait_for_task(submission.task_id)
+            return opc_result(task, submission)
     if provider == "kuaizi":
         api_config = load_kuaizi_config(data)
         client_type = KuaiziClient
@@ -338,10 +344,13 @@ class WanQueryTask:
             raise ValueError("task_id is required.")
         data = load_json_config()
         provider = load_provider(data)
-        if provider in {"vapeur", "kuaizi"}:
-            client_type = KuaiziClient if provider == "kuaizi" else VapeurClient
-            api_config = load_kuaizi_config(data) if provider == "kuaizi" else load_vapeur_config(data)
-            result_parser = kuaizi_result if provider == "kuaizi" else vapeur_result
+        if provider in {"vapeur", "kuaizi", "opc"}:
+            client_type, config_loader, result_parser = {
+                "vapeur": (VapeurClient, load_vapeur_config, vapeur_result),
+                "kuaizi": (KuaiziClient, load_kuaizi_config, kuaizi_result),
+                "opc": (OpcClient, load_opc_config, opc_result),
+            }[provider]
+            api_config = config_loader(data)
             with client_type(api_config) as client:
                 detail = client.wait_for_task(task_id) if wait_for_completion else client.describe_task(task_id)
                 status = client.check_task(detail, task_id)

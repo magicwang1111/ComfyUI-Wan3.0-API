@@ -1,5 +1,10 @@
 {
   "provider": "tencent",
+  "opc_base_url": "https://model-router.edu-aliyun.com",
+  "opc_api_key": "",
+  "opc_poll_interval": 5,
+  "opc_request_timeout": 120,
+  "opc_max_wait_seconds": 3600,
   "kuaizi_base_url": "https://aiopenapi.kuaizi.cn",
   "kuaizi_api_key": "",
   "kuaizi_poll_interval": 15,

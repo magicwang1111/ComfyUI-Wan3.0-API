@@ -1,6 +1,6 @@
 # ComfyUI Wan 3.0 API
 
-ComfyUI nodes for Wan 3.0 and Wan 3.0 Prime video generation through Tencent VOD, Vapeur, or Kuaizi. Select the provider in `config.json` (legacy `config.local.json` is also supported). Local images, videos, and audios are uploaded to a private Alibaba Cloud OSS prefix and passed to the selected provider as short-lived signed URLs. The Preview node saves the original MP4 under ComfyUI `output/video`.
+ComfyUI nodes for Wan 3.0 and Wan 3.0 Prime video generation through Tencent VOD, Vapeur, Kuaizi, or OPC. Select the provider in `config.json` (legacy `config.local.json` is also supported). Local images, videos, and audios use a private Alibaba Cloud OSS prefix, except OPC images which are sent directly as Data URLs. The Preview node saves the original MP4 under ComfyUI `output/video`.
 
 Video generation is a paid operation on all providers. OSS hosts input media separately from the Wan generation charge.
 
@@ -12,7 +12,34 @@ Use an Alibaba Cloud RAM identity restricted to `PutObject` and `DeleteObject` u
 
 ## Provider selection
 
-Both configuration files are read on each generation/query. Non-empty values in `config.json` override the same keys in `config.local.json`; other legacy settings, including OSS credentials, remain available. Set `provider` to `tencent`, `vapeur`, or `kuaizi`; omitting it preserves Tencent behavior (unless `WAN3_PROVIDER` is set). Restart ComfyUI once after installing this code update. Subsequent configuration changes do not require a restart, but generation nodes must execute again (for example, change the seed) to avoid ComfyUI reusing a cached result.
+Both configuration files are read on each generation/query. Non-empty values in `config.json` override the same keys in `config.local.json`; other legacy settings, including OSS credentials, remain available. Set `provider` to `tencent`, `vapeur`, `kuaizi`, or `opc`; omitting it preserves Tencent behavior (unless `WAN3_PROVIDER` is set). Restart ComfyUI once after installing this code update. Subsequent configuration changes do not require a restart, but generation nodes must execute again to avoid ComfyUI reusing a cached result.
+
+### OPC
+
+Add these fields to `config.local.json`. Remove any `provider` or `opc_*` overrides from `config.json` if this local file should control OPC selection.
+
+```json
+{
+  "provider": "opc",
+  "opc_base_url": "https://model-router.edu-aliyun.com",
+  "opc_api_key": "YOUR_OPC_API_KEY",
+  "opc_poll_interval": 5,
+  "opc_request_timeout": 120,
+  "opc_max_wait_seconds": 3600
+}
+```
+
+OPC submits JSON to `POST /v1/videos/generations` with Bearer authentication. Models `3.0` and `3.0-prime` map to `qwen/wan3.0-video/v1` and `qwen/wan3.0-video-prime/v1`, as listed by this platform's `/v1/models` endpoint. Non-empty JSON values override `OPC_API_KEY`, `OPC_BASE_URL`, `OPC_POLL_INTERVAL`, `OPC_REQUEST_TIMEOUT`, and `OPC_MAX_WAIT_SECONDS`.
+
+Use Text To Video, Frame To Video with only `first_frame`, or Reference To Video with one image. A prompt is required in every mode. Local images are encoded as image Data URLs; OPC does not use OSS. Last frames, multiple images, reference video, and reference audio are rejected before submission.
+
+Set a fixed positive duration, `seed=-1`, empty `negative_prompt`, and `enhance_prompt`/`super_resolution=Disabled`. Leave `audio_generation=Enabled`: OPC has no documented audio switch, so audio follows the provider's default. Watermark is disabled. Resolution and aspect ratio become an explicit pixel size (720P at 16:9 gives `1280x720`); adaptive local-image mode uses the image's ratio with the requested short-side resolution, rounded to even pixels. Actual size/duration availability is decided by the selected model. For externally supplied image URLs with adaptive ratio, size is omitted and the provider chooses it.
+
+The supplied async-task documentation confirms `GET /v1/tasks/{task_id}` with `Authorization: Bearer ...` and `Content-Type: application/json`. The task ID returned by creation is a path parameter, not a JSON body; the client URL-encodes it without adding or removing a provider prefix. Queries have no request body. The client retries temporary query failures and never automatically resubmits generation.
+
+Generation nodes automatically poll after submission. To resume an existing task, use Query Task with the original `task_id` and `provider=opc`: enable `wait_for_completion` to poll every 5 seconds by default (up to 3600 seconds), or disable it for one query. Connect its `video_url` output to Preview Video to download a completed result. Query Task must use the task's original provider.
+
+Integration verification: authentication, model discovery, and the task route were checked on 2026-09-23 without creating a paid job. The supplied documentation does not include task response examples; parsing currently accepts top-level, `data`, and Wan `output` envelopes with `task_id`/`id`, `task_status`/`status`, and `video_url`/`url`. Successful task polling and video download still need verification against a real task or the complete OPC task documentation.
 
 ### Kuaizi
 

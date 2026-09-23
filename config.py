@@ -25,8 +25,8 @@ class VapeurConfig:
 def load_provider(data: dict | None = None) -> str:
     data = load_json_config() if data is None else data
     provider = str(_value(data, "provider", "WAN3_PROVIDER", "tencent")).strip().lower()
-    if provider not in {"tencent", "vapeur", "kuaizi"}:
-        raise ValueError("provider must be tencent, vapeur, or kuaizi.")
+    if provider not in {"tencent", "vapeur", "kuaizi", "opc"}:
+        raise ValueError("provider must be tencent, vapeur, kuaizi, or opc.")
     return provider
 
 
@@ -78,6 +78,32 @@ def load_kuaizi_config(data: dict | None = None) -> KuaiziConfig:
         api_key=api_key, base_url=base_url, poll_interval=poll_interval,
         request_timeout=_positive_int(_value(data, "kuaizi_request_timeout", "KUAIZI_REQUEST_TIMEOUT", 120), "kuaizi_request_timeout", 5),
         max_wait_seconds=_positive_int(_value(data, "kuaizi_max_wait_seconds", "KUAIZI_MAX_WAIT_SECONDS", 3600), "kuaizi_max_wait_seconds", 30),
+    )
+
+
+@dataclass(frozen=True)
+class OpcConfig:
+    api_key: str
+    base_url: str
+    poll_interval: float
+    request_timeout: int
+    max_wait_seconds: int
+
+
+def load_opc_config(data: dict | None = None) -> OpcConfig:
+    data = load_json_config() if data is None else data
+    api_key = str(_value(data, "opc_api_key", "OPC_API_KEY", "")).strip()
+    if not api_key:
+        raise ValueError("OPC requires opc_api_key in config.json/config.local.json or OPC_API_KEY.")
+    base_url = str(_value(data, "opc_base_url", "OPC_BASE_URL", "https://model-router.edu-aliyun.com")).strip().rstrip("/")
+    parsed = urlsplit(base_url)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.path or parsed.query or parsed.fragment or parsed.username or parsed.password:
+        raise ValueError("opc_base_url must be an HTTPS origin without a path (do not append /v1).")
+    return OpcConfig(
+        api_key=api_key, base_url=base_url,
+        poll_interval=_positive_float(_value(data, "opc_poll_interval", "OPC_POLL_INTERVAL", 5), "opc_poll_interval"),
+        request_timeout=_positive_int(_value(data, "opc_request_timeout", "OPC_REQUEST_TIMEOUT", 120), "opc_request_timeout", 5),
+        max_wait_seconds=_positive_int(_value(data, "opc_max_wait_seconds", "OPC_MAX_WAIT_SECONDS", 3600), "opc_max_wait_seconds", 30),
     )
 
 
