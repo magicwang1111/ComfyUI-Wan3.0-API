@@ -21,6 +21,18 @@ function chainCallback(object, property, callback) {
     };
 }
 
+function hideReferenceUrls() {
+    for (const widget of this.widgets ?? []) {
+        if (widget.name === "reference_file_url" || widget.name === "reference_link_url") {
+            widget.hidden = true;
+            widget.type = "converted-widget";
+            widget.computeSize = () => [0, -4];
+            widget.draw = () => {};
+        }
+    }
+    this.setDirtyCanvas(true, true);
+}
+
 function addVideoPreview(nodeType) {
     const createVideo = (url) => new Promise((resolve) => {
         const video = document.createElement("video");
@@ -88,9 +100,12 @@ function addVideoPreview(nodeType) {
 app.registerExtension({
     name: "Wan3ApiVideoPreview",
     async beforeRegisterNodeDef(nodeType, nodeData) {
+        if (nodeData.name === "Wan 3.0 API Reference To Video") {
+            chainCallback(nodeType.prototype, "onNodeCreated", hideReferenceUrls);
+            chainCallback(nodeType.prototype, "onConfigure", hideReferenceUrls);
+        }
         if (nodeData.name === "Wan 3.0 API Preview Video") {
             addVideoPreview(nodeType);
         }
     },
 });
-
