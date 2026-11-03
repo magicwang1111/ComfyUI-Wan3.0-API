@@ -24,7 +24,8 @@ from .vapeur import (
     VapeurClient, VapeurTaskError, VapeurSubmissionUncertain,
     build_payload as vapeur_payload, video_result as vapeur_result,
 )
-from .media import audio_to_blob, first_image_blob, image_batch_to_blobs, video_to_blob
+from .media import audio_to_blob, image_batch_to_blobs, image_files_to_blobs, video_to_blob
+from .image_files import image_input_files, required_image_inputs
 from .models import (
     AUDIO_GENERATION_OPTIONS,
     ASPECT_RATIOS,
@@ -230,17 +231,33 @@ class WanTextToVideo:
         return (result.video_url, result.video_id, result.task_id)
 
 
+def _image_blobs(image, dynprompt, unique_id, name, maximum):
+    if image is not None:
+        return image_batch_to_blobs(image, maximum=maximum)
+    files = image_input_files(dynprompt, unique_id, name)
+    if files is not None:
+        return image_files_to_blobs(files, maximum=maximum)
+    if dynprompt is not None and name in dynprompt.get_node(unique_id)["inputs"]:
+        raise ValueError("Reference image changed before upload; run the workflow again.")
+    return []
+
+
 class WanFrameToVideo:
     @classmethod
     def INPUT_TYPES(cls):
         optional = _common_optional()
-        optional.update({"first_frame": ("IMAGE",), "last_frame": ("IMAGE",)})
-        return {"required": _common_required(aspect_ratio=False), "optional": optional}
+        optional.update({"first_frame": ("IMAGE", {"lazy": True}), "last_frame": ("IMAGE", {"lazy": True})})
+        return {"required": _common_required(aspect_ratio=False), "optional": optional,
+                "hidden": {"dynprompt": "DYNPROMPT", "unique_id": "UNIQUE_ID"}}
 
     RETURN_TYPES = ("STRING", "STRING", "STRING")
     RETURN_NAMES = ("video_url", "video_id", "task_id")
     FUNCTION = "generate"
     CATEGORY = NODE_CATEGORY
+
+    def check_lazy_status(self, dynprompt=None, unique_id=None, **kwargs):
+        images = {name: kwargs[name] for name in ("first_frame", "last_frame") if name in kwargs}
+        return required_image_inputs(dynprompt, unique_id, images)
 
     def generate(
         self,
@@ -255,14 +272,15 @@ class WanFrameToVideo:
         audio_generation="Enabled",
         first_frame=None,
         last_frame=None,
+        dynprompt=None,
+        unique_id=None,
     ):
-        if first_frame is None and last_frame is None:
+        first = _image_blobs(first_frame, dynprompt, unique_id, "first_frame", 1)
+        last = _image_blobs(last_frame, dynprompt, unique_id, "last_frame", 1)
+        if not first and not last:
             raise ValueError("Connect first_frame, last_frame, or both.")
-        media = []
-        if first_frame is not None:
-            media.append((first_image_blob(first_frame), "Image", "FirstFrame"))
-        if last_frame is not None:
-            media.append((first_image_blob(last_frame), "Image", "LastFrame"))
+        media = ([(blob, "Image", "FirstFrame") for blob in first]
+                 + [(blob, "Image", "LastFrame") for blob in last])
         request = _request(
             model_version, prompt, resolution, "adaptive", duration,
             negative_prompt, enhance_prompt, seed, _session_id(), super_resolution,
@@ -276,17 +294,22 @@ class WanReferenceToVideo:
     @classmethod
     def INPUT_TYPES(cls):
         optional = _common_optional()
-        optional["reference_images"] = ("IMAGE",)
+        optional["reference_images"] = ("IMAGE", {"lazy": True})
         optional.update({f"reference_video_{index}": ("VIDEO",) for index in range(1, 6)})
         optional.update({f"reference_audio_{index}": ("AUDIO",) for index in range(1, 6)})
         optional["reference_file_url"] = ("STRING", {"default": "", "tooltip": "OPC: public document URL; requires enhance_prompt Enabled."})
         optional["reference_link_url"] = ("STRING", {"default": "", "tooltip": "OPC: public webpage URL; requires enhance_prompt Enabled."})
-        return {"required": _common_required(aspect_ratio=True), "optional": optional}
+        return {"required": _common_required(aspect_ratio=True), "optional": optional,
+                "hidden": {"dynprompt": "DYNPROMPT", "unique_id": "UNIQUE_ID"}}
 
     RETURN_TYPES = ("STRING", "STRING", "STRING")
     RETURN_NAMES = ("video_url", "video_id", "task_id")
     FUNCTION = "generate"
     CATEGORY = NODE_CATEGORY
+
+    def check_lazy_status(self, dynprompt=None, unique_id=None, **kwargs):
+        images = {name: kwargs[name] for name in ("reference_images",) if name in kwargs}
+        return required_image_inputs(dynprompt, unique_id, images)
 
     def generate(
         self,
@@ -301,9 +324,11 @@ class WanReferenceToVideo:
         super_resolution="Disabled",
         audio_generation="Enabled",
         reference_images=None,
+        dynprompt=None,
+        unique_id=None,
         **kwargs,
     ):
-        image_blobs = image_batch_to_blobs(reference_images, maximum=10)
+        image_blobs = _image_blobs(reference_images, dynprompt, unique_id, "reference_images", 10)
         video_inputs = [kwargs.get(f"reference_video_{index}") for index in range(1, 6)]
         audio_inputs = [kwargs.get(f"reference_audio_{index}") for index in range(1, 6)]
         video_blobs = [video_to_blob(item) for item in video_inputs if item is not None]

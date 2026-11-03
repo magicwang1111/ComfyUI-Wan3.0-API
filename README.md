@@ -4,6 +4,12 @@ ComfyUI nodes for Wan 3.0 and Wan 3.0 Prime video generation through Tencent VOD
 
 Video generation is a paid operation on all providers. OSS hosts input media separately from the Wan generation charge.
 
+## Image upload memory
+
+Frame and reference image inputs automatically upload original RGB JPEG/PNG files from `LoadImage` without creating full-size IMAGE tensors. Static 8-bit RGBA PNGs are converted to RGB. CPU `ImageResizeKJv2` with Lanczos and `stretch`, `resize`, or `total_pixels` is processed from the file with the same size calculation and pixel results. Equal-size `BatchImagesNode` inputs retain their order. Image size, aspect-ratio, byte-size, and count limits still apply.
+
+Other transformations, connected masks, rotated EXIF images, animated images, and unsupported formats use the normal tensor path. Another branch that needs IMAGE data can still load the source. Tensor batches are converted one image at a time to reduce temporary allocations. File paths stay within the current user's input directory. Restart ComfyUI after updating the plugin to enable these changes.
+
 ## Security first
 
 Do not reuse credentials that have appeared in chat, logs, screenshots, or source control. Rotate them first, then place the new values only in `config.json` or `config.local.json`. Both files are ignored by Git.

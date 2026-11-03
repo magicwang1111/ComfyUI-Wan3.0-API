@@ -21,12 +21,16 @@ def _check_size(data: bytes, maximum: int, label: str) -> None:
         raise ValueError(f"{label} exceeds the {maximum // (1024 * 1024)} MB limit.")
 
 
-def _image_blob(image: Image.Image) -> MediaBlob:
-    width, height = image.size
+def _validate_image_size(size):
+    width, height = size
     if not (256 <= width <= 5760 and 256 <= height <= 5760):
         raise ValueError("Images must have width and height between 256 and 5760 pixels.")
     if not 0.4 <= width / height <= 2.5:
         raise ValueError("Image aspect ratio must be between 0.4 and 2.5.")
+
+
+def _image_blob(image: Image.Image) -> MediaBlob:
+    _validate_image_size(image.size)
     with io.BytesIO() as buffer:
         image.convert("RGB").save(buffer, format="JPEG", quality=95, subsampling=0)
         data = buffer.getvalue()
@@ -44,8 +48,27 @@ def image_batch_to_blobs(tensor, maximum: int = 10) -> list[MediaBlob]:
         raise ValueError("IMAGE input must contain one or more images.")
     if array.shape[0] > maximum:
         raise ValueError(f"At most {maximum} images are supported.")
-    array = numpy.clip(array * 255.0, 0, 255).astype(numpy.uint8)
-    return [_image_blob(Image.fromarray(frame)) for frame in array]
+    return [_image_blob(Image.fromarray(numpy.clip(frame * 255.0, 0, 255).astype(numpy.uint8)))
+            for frame in array]
+
+
+def image_files_to_blobs(files, maximum=10):
+    if len(files) > maximum:
+        raise ValueError(f"At most {maximum} images are supported.")
+    blobs = []
+    for source in files:
+        _validate_image_size(source.size)
+        if source.resize_sizes or source.mode != "RGB" or source.path.stat().st_size > MAX_IMAGE_BYTES:
+            with source.read_image() as image:
+                blobs.append(_image_blob(image))
+        else:
+            content_type = "image/jpeg" if source.format == "JPEG" else "image/png"
+            with source.upload_path() as path, open(path, "rb") as handle:
+                data = handle.read()
+            _check_size(data, MAX_IMAGE_BYTES, "Image")
+            blobs.append(MediaBlob(data=data, content_type=content_type,
+                                   extension="jpg" if content_type == "image/jpeg" else "png"))
+    return blobs
 
 
 def first_image_blob(tensor) -> MediaBlob:
